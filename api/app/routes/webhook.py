@@ -21,6 +21,9 @@ async def stripe_webhook(
     stripe_signature: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> dict:
+    if not settings.STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(503, "Stripe is not configured on this server")
+
     payload = await request.body()
 
     try:

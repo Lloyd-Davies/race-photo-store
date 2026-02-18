@@ -14,8 +14,14 @@ router = APIRouter(prefix="/api", tags=["checkout"])
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def _require_stripe() -> None:
+    if not settings.STRIPE_SECRET_KEY or not settings.STRIPE_PRICE_ID:
+        raise HTTPException(503, "Stripe is not configured on this server")
+
+
 @router.post("/checkout", response_model=CheckoutOut)
 def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> CheckoutOut:
+    _require_stripe()
     cart = db.query(Cart).filter(Cart.id == req.cart_id).first()
     if not cart:
         raise HTTPException(404, "Cart not found")
