@@ -81,10 +81,12 @@ services:
       - api
     ports:
       - "127.0.0.1:8081:8080"
-    networks: [photostore]
+    networks: [photostore, cloudflared_default]
     restart: unless-stopped
 
 networks:
   photostore:
     name: photostore
     driver: bridge
+  cloudflared_default:
+    external: true
