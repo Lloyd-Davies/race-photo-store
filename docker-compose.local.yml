@@ -1,0 +1,26 @@
+# Local development overrides — replaces Linux VM paths with local relative paths.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up
+#
+# Data is stored under .localdata/ (gitignored).
+
+services:
+  postgres:
+    volumes:
+      - ./.localdata/pgdata:/var/lib/postgresql/data
+
+  redis:
+    volumes:
+      - ./.localdata/redis:/data
+
+  api:
+    volumes:
+      - ./.localdata/photos:/data/photos
+
+  worker:
+    volumes:
+      - ./.localdata/photos:/data/photos
+
+  nginx:
+    volumes:
+      - ./.localdata/photos:/srv/photos:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
