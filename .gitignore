@@ -1,0 +1,49 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# Alembic
+# (versions/ is tracked; exclude nothing extra here)
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Local data (never commit photos or DB files)
+/data/
+*.zip
+*.tar.zst
+*.jpg
+*.jpeg
+*.png
+*.raw
+*.arw
