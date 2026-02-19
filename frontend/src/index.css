@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens: light (default) ──────────────────────────────────────── */
+:root {
+  /* Surface scale */
+  --s-950: 248 250 252;   /* #f8fafc */
+  --s-900: 241 245 249;   /* #f1f5f9 */
+  --s-800: 226 232 240;   /* #e2e8f0 */
+  --s-700: 203 213 225;   /* #cbd5e1 */
+  --s-600: 148 163 184;   /* #94a3b8 */
+  /* Text */
+  --c-text:  15  23  42;  /* #0f172a */
+  --c-muted: 71  85 105;  /* #475569 */
+  color-scheme: light;
+}
+
+/* ── Theme tokens: dark ─────────────────────────────────────────────────── */
+.dark {
+  --s-950:   3   7  18;   /* #030712 */
+  --s-900:  17  24  39;   /* #111827 */
+  --s-800:  31  41  55;   /* #1f2937 */
+  --s-700:  55  65  81;   /* #374151 */
+  --s-600:  75  85  99;   /* #4b5563 */
+  --c-text: 243 244 246;  /* #f3f4f6 */
+  --c-muted:156 163 175;  /* #9ca3af */
+  color-scheme: dark;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -21,7 +47,25 @@
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-500;
+    @apply bg-surface-700;
+  }
+}
+
+@layer utilities {
+  /* Masonry layout via CSS columns — no JS reflow */
+  .masonry {
+    columns: 2;
+    column-gap: 0.75rem;
+  }
+
+  @media (min-width: 640px)  { .masonry { columns: 3; } }
+  @media (min-width: 1024px) { .masonry { columns: 4; } }
+  @media (min-width: 1280px) { .masonry { columns: 5; } }
+
+  .masonry-item {
+    break-inside: avoid;
+    margin-bottom: 0.75rem;
+    display: block;
   }
 }
 

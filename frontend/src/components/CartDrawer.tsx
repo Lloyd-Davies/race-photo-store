@@ -48,13 +48,13 @@ export default function CartDrawer({ open, onClose }: CartDrawerProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 h-14 border-b border-surface-700 shrink-0">
-          <div className="flex items-center gap-2 font-semibold text-gray-100">
-            <ShoppingCart size={18} className="text-orange-500" />
+          <div className="flex items-center gap-2 font-semibold text-content">
+            <ShoppingCart size={18} className="text-sky-500" />
             <span>Cart ({items.length})</span>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-100 transition-colors"
+            className="text-content-muted hover:text-content transition-colors"
             aria-label="Close cart"
           >
             <X size={20} />

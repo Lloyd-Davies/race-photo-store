@@ -92,7 +92,7 @@ export default function AdminIngest() {
       <section className="bg-surface-900 border border-surface-700 rounded-xl p-6">
         <h2 className="font-semibold text-gray-100 mb-1">Upload bib tags</h2>
         <p className="text-xs text-gray-400 mb-4">
-          Upload a JSON array of <code className="text-orange-400">{"[{photo_id, bib}, ...]"}</code>{' '}
+          Upload a JSON array of <code className="text-sky-400">{"[{photo_id, bib}, ...]"}</code>{' '}
           mappings to enable bib-number search.
         </p>
 

@@ -56,7 +56,7 @@ export default function EventGallery() {
       {/* Title + controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-100">{event?.name ?? 'Gallery'}</h1>
+          <h1 className="text-xl font-bold text-content">{event?.name ?? 'Gallery'}</h1>
           {data && (
             <p className="text-sm text-gray-400 mt-0.5">{data.total} photos</p>
           )}
@@ -70,7 +70,7 @@ export default function EventGallery() {
               value={bibInput}
               onChange={(e) => setBibInput(e.target.value)}
               placeholder="Bib number…"
-              className="bg-surface-800 border border-surface-600 rounded-md text-sm text-gray-200 px-3 py-1.5 w-32 focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-gray-500"
+              className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-1.5 w-32 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
             />
             <Button type="submit" size="sm" variant="secondary">
               <Search size={14} />

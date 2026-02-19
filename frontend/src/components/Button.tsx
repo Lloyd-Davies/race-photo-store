@@ -12,11 +12,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants: Record<Variant, string> = {
   primary:
-    'bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white shadow-sm',
+    'bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white shadow-sm',
   secondary:
-    'bg-surface-800 hover:bg-surface-700 border border-surface-600 text-gray-200',
+    'bg-surface-800 hover:bg-surface-700 border border-surface-600 text-content',
   ghost:
-    'bg-transparent hover:bg-surface-800 text-gray-300 hover:text-gray-100',
+    'bg-transparent hover:bg-surface-800 text-content-muted hover:text-content',
   danger:
     'bg-red-600 hover:bg-red-700 text-white',
 }
@@ -41,7 +41,7 @@ export default function Button({
       {...props}
       disabled={disabled || loading}
       className={clsx(
-        'font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50 disabled:pointer-events-none',
+        'font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:opacity-50 disabled:pointer-events-none',
         variants[variant],
         sizes[size],
         className,

@@ -6,13 +6,18 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Surface scale: dark editorial palette
+        // Surface scale — adapt via CSS custom properties
         surface: {
-          950: '#030712', // near-black page bg
-          900: '#111827', // card bg
-          800: '#1f2937', // raised surface
-          700: '#374151', // border
-          600: '#4b5563', // muted border
+          950: 'rgb(var(--s-950) / <alpha-value>)',
+          900: 'rgb(var(--s-900) / <alpha-value>)',
+          800: 'rgb(var(--s-800) / <alpha-value>)',
+          700: 'rgb(var(--s-700) / <alpha-value>)',
+          600: 'rgb(var(--s-600) / <alpha-value>)',
+        },
+        // Adaptive text — primary and muted
+        content: {
+          DEFAULT: 'rgb(var(--c-text) / <alpha-value>)',
+          muted:   'rgb(var(--c-muted) / <alpha-value>)',
         },
       },
       fontFamily: {

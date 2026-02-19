@@ -14,14 +14,14 @@ function EventCard({ event }: { event: Event }) {
   return (
     <Link
       to={`/events/${event.id}`}
-      className="group block bg-surface-900 border border-surface-700 rounded-xl overflow-hidden hover:border-orange-500/60 transition-colors"
+      className="group block bg-surface-900 border border-surface-700 rounded-xl overflow-hidden hover:border-sky-500/60 transition-colors"
     >
       {/* Colour band */}
-      <div className="h-2 bg-orange-500 w-full" />
+      <div className="h-2 bg-sky-500 w-full" />
 
       <div className="p-5">
         <div className="flex items-start justify-between gap-2">
-          <h2 className="font-semibold text-gray-100 group-hover:text-orange-400 transition-colors text-lg leading-tight">
+          <h2 className="font-semibold text-content group-hover:text-sky-500 transition-colors text-lg leading-tight">
             {event.name}
           </h2>
           {event.status === 'ARCHIVED' && (
@@ -33,12 +33,12 @@ function EventCard({ event }: { event: Event }) {
 
         <div className="mt-3 space-y-1 text-sm text-gray-400">
           <div className="flex items-center gap-1.5">
-            <CalendarDays size={14} className="text-orange-500/80" />
+            <CalendarDays size={14} className="text-sky-500/70" />
             {date}
           </div>
           {event.location && (
             <div className="flex items-center gap-1.5">
-              <MapPin size={14} className="text-orange-500/80" />
+              <MapPin size={14} className="text-sky-500/70" />
               {event.location}
             </div>
           )}
@@ -56,7 +56,7 @@ export default function EventList() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
-      <h1 className="text-2xl font-bold text-gray-100 mb-8">Race Events</h1>
+      <h1 className="text-2xl font-bold text-content mb-8">Race Events</h1>
 
       {isLoading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

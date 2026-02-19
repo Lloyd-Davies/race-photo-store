@@ -25,15 +25,15 @@ function StatusStep({ label, done, active }: { label: string; done: boolean; act
       <span
         className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
           done
-            ? 'border-orange-500 bg-orange-500'
+            ? 'border-sky-500 bg-sky-500'
             : active
-              ? 'border-orange-400 bg-transparent animate-pulse'
+              ? 'border-sky-400 bg-transparent animate-pulse'
               : 'border-surface-600 bg-transparent'
         }`}
       >
         {done && <CheckCircle2 size={12} className="text-white" />}
       </span>
-      <span className={`text-sm ${done || active ? 'text-gray-200' : 'text-gray-500'}`}>
+      <span className={`text-sm ${done || active ? 'text-content' : 'text-content-muted'}`}>
         {label}
       </span>
     </li>
@@ -77,7 +77,7 @@ export default function OrderStatus() {
   if (!order) {
     return (
       <div className="max-w-md mx-auto px-4 py-20 text-center">
-        <Loader2 size={32} className="animate-spin text-orange-500 mx-auto" />
+        <Loader2 size={32} className="animate-spin text-sky-500 mx-auto" />
         <p className="text-sm text-gray-400 mt-4">Loading order…</p>
       </div>
     )
@@ -93,15 +93,15 @@ export default function OrderStatus() {
         {/* Icon */}
         <div className="flex justify-center mb-6">
           {status === 'READY' ? (
-            <CheckCircle2 size={48} className="text-orange-400" />
+            <CheckCircle2 size={48} className="text-sky-400" />
           ) : status === 'FAILED' ? (
             <XCircle size={48} className="text-red-400" />
           ) : (
-            <Clock size={48} className="text-orange-500 animate-pulse" />
+            <Clock size={48} className="text-sky-500 animate-pulse" />
           )}
         </div>
 
-        <h1 className="text-xl font-bold text-center text-gray-100 mb-1">
+          <h1 className="text-xl font-bold text-center text-content mb-1">
           {status === 'READY'
             ? 'Your photos are ready!'
             : status === 'FAILED'
@@ -154,7 +154,7 @@ export default function OrderStatus() {
         )}
 
         <div className="mt-6 text-center">
-          <Link to="/" className="text-sm text-gray-400 hover:text-orange-400 transition-colors">
+          <Link to="/" className="text-sm text-content-muted hover:text-sky-500 transition-colors">
             Browse more events
           </Link>
         </div>

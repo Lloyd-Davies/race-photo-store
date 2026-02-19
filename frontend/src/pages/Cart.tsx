@@ -61,7 +61,7 @@ export default function Cart() {
         Back to gallery
       </Link>
 
-      <h1 className="text-xl font-bold text-gray-100 mb-6">
+      <h1 className="text-xl font-bold text-content mb-6">
         Your cart — {items.length} photo{items.length !== 1 ? 's' : ''}
       </h1>
 
@@ -92,7 +92,7 @@ export default function Cart() {
       {/* Email */}
       <div className="mb-6">
         <label className="block text-sm text-gray-300 mb-2 font-medium">
-          <Mail size={14} className="inline mr-1.5 text-orange-500" />
+          <Mail size={14} className="inline mr-1.5 text-sky-500" />
           Email (optional — for order confirmation)
         </label>
         <input
@@ -100,7 +100,7 @@ export default function Cart() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-gray-500"
+          className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
         />
       </div>
 

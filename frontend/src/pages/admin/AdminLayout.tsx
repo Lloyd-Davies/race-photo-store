@@ -39,9 +39,9 @@ export default function AdminLayout() {
       <div className="min-h-[60vh] flex items-center justify-center px-4">
         <div className="bg-surface-900 border border-surface-700 rounded-2xl p-8 w-full max-w-sm">
           <div className="flex justify-center mb-6">
-            <ShieldAlert size={40} className="text-orange-500" />
+            <ShieldAlert size={40} className="text-sky-500" />
           </div>
-          <h1 className="text-lg font-bold text-center text-gray-100 mb-6">Admin access</h1>
+          <h1 className="text-lg font-bold text-center text-content mb-6">Admin access</h1>
           <form onSubmit={handleLogin} className="space-y-4">
             <input
               type="password"
@@ -49,7 +49,7 @@ export default function AdminLayout() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Admin token"
-              className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-gray-500"
+              className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
             />
             {error && (
               <p className="text-xs text-red-400">Please enter a token.</p>
@@ -73,8 +73,8 @@ export default function AdminLayout() {
           className={({ isActive }) =>
             `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               isActive
-                ? 'bg-orange-500/20 text-orange-400'
-                : 'text-gray-400 hover:bg-surface-800 hover:text-gray-200'
+                ? 'bg-sky-500/20 text-sky-500'
+                : 'text-content-muted hover:bg-surface-800 hover:text-content'
             }`
           }
         >

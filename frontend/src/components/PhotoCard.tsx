@@ -29,7 +29,7 @@ export default function PhotoCard({ photo, eventId }: PhotoCardProps) {
     <div
       ref={ref}
       className={`masonry-item group relative cursor-pointer rounded overflow-hidden bg-surface-900 transition-transform hover:scale-[1.01] ${
-        inCart ? 'ring-2 ring-orange-500' : ''
+        inCart ? 'ring-2 ring-sky-500' : ''
       }`}
       onClick={toggle}
       role="button"
@@ -60,7 +60,7 @@ export default function PhotoCard({ photo, eventId }: PhotoCardProps) {
       <div
         className={`absolute inset-0 transition-all duration-200 ${
           inCart
-            ? 'bg-orange-500/20'
+            ? 'bg-sky-500/20'
             : 'bg-black/0 group-hover:bg-black/20'
         }`}
       />
@@ -72,7 +72,7 @@ export default function PhotoCard({ photo, eventId }: PhotoCardProps) {
         tabIndex={-1}
       >
         {inCart ? (
-          <CheckCircle2 size={22} className="text-orange-400 drop-shadow" />
+          <CheckCircle2 size={22} className="text-sky-400 drop-shadow" />
         ) : (
           <PlusCircle size={22} className="text-white drop-shadow" />
         )}

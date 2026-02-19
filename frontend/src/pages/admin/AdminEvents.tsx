@@ -73,7 +73,7 @@ export default function AdminEvents() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-gray-100">Events</h1>
+        <h1 className="text-xl font-bold text-content">Events</h1>
         <Button size="sm" onClick={() => setShowForm((v) => !v)}>
           <Plus size={14} className="mr-1" />
           New event
@@ -86,7 +86,7 @@ export default function AdminEvents() {
           onSubmit={handleSubmit}
           className="bg-surface-800 border border-surface-600 rounded-xl p-6 mb-8 space-y-4"
         >
-          <h2 className="font-semibold text-gray-100 text-sm mb-2">Create event</h2>
+          <h2 className="font-semibold text-content text-sm mb-2">Create event</h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {(
@@ -104,7 +104,7 @@ export default function AdminEvents() {
                   value={form[key]}
                   onChange={(e) => handleField(key, e.target.value)}
                   placeholder={placeholder}
-                  className="w-full bg-surface-900 border border-surface-600 rounded-md text-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-gray-500"
+                  className="w-full bg-surface-900 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
                 />
                 {errors[key] && (
                   <p className="text-xs text-red-400 mt-1">{errors[key]}</p>
