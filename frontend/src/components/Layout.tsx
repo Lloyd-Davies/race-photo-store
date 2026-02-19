@@ -4,10 +4,12 @@ import { useCartStore } from '../store/cart'
 import CartDrawer from './CartDrawer'
 import ThemeToggle from './ThemeToggle'
 import { useState } from 'react'
+import { useSiteConfig } from '../context/SiteConfig'
 
 export default function Layout() {
   const items = useCartStore((s) => s.items)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const { site_name } = useSiteConfig()
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -19,7 +21,7 @@ export default function Layout() {
             className="flex items-center gap-2 font-semibold text-content hover:text-sky-500 transition-colors"
           >
             <Camera size={20} className="text-sky-500" />
-            <span>Race Photos</span>
+            <span>{site_name}</span>
           </Link>
 
           <nav className="flex items-center gap-4">
@@ -55,7 +57,7 @@ export default function Layout() {
 
       {/* Footer */}
       <footer className="border-t border-surface-700 py-6 text-center text-sm text-content-muted">
-        Race Photos &copy; {new Date().getFullYear()}
+        {site_name} &copy; {new Date().getFullYear()}
       </footer>
 
       {/* Cart drawer */}

@@ -42,6 +42,8 @@ services:
       STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      SITE_NAME: ${SITE_NAME:-Race Photos}
+      SITE_TAGLINE: ${SITE_TAGLINE:-Your race, your photos.}
       UVICORN_WORKERS: "2"
     volumes:
       - /mnt/pstore/photos:/data/photos

@@ -15,5 +15,9 @@ class Settings(BaseSettings):
     CELERY_CONCURRENCY: int = 2
     UVICORN_WORKERS: int = 2
 
+    # ── Branding ──────────────────────────────────────────────────────────────
+    SITE_NAME: str = "Race Photos"
+    SITE_TAGLINE: str = "Your race, your photos."
+
 
 settings = Settings()
