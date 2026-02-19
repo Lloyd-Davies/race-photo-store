@@ -1,4 +1,5 @@
 # Local-dev overrides — replaces production /mnt/pstore paths with ./data/*
+# and re-adds build: blocks so `docker compose build` works locally.
 # Docker Compose merges this automatically when both files are present.
 # Add ./data/ to .gitignore — never commit photo assets.
 services:
@@ -11,13 +12,22 @@ services:
       - ./data/redis:/data
 
   api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     volumes:
       - ./data/photos:/data/photos
 
   worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     volumes:
       - ./data/photos:/data/photos
 
   nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
     volumes:
       - ./data/photos:/srv/photos:ro

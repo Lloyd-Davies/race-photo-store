@@ -32,7 +32,7 @@ services:
 
   api:
     container_name: photostore-api
-    image: photostore-api:dev
+    image: ghcr.io/lloyd-davies/race-photo-store/api:latest
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
@@ -55,7 +55,7 @@ services:
 
   worker:
     container_name: photostore-worker
-    image: photostore-worker:dev
+    image: ghcr.io/lloyd-davies/race-photo-store/worker:latest
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
@@ -73,9 +73,7 @@ services:
 
   nginx:
     container_name: photostore-nginx
-    build:
-      context: .
-      dockerfile: nginx/Dockerfile
+    image: ghcr.io/lloyd-davies/race-photo-store/nginx:latest
     volumes:
       - /mnt/pstore/photos:/srv/photos:ro
     depends_on:
