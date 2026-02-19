@@ -81,12 +81,21 @@ services:
       - api
     ports:
       - "127.0.0.1:8081:8080"
-    networks: [photostore, cloudflared_default]
+    networks: [photostore]
+    restart: unless-stopped
+
+  cloudflared:
+    container_name: photostore-cloudflared
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    networks: [photostore]
     restart: unless-stopped
 
 networks:
   photostore:
     name: photostore
     driver: bridge
-  cloudflared_default:
-    external: true

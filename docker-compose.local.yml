@@ -24,3 +24,7 @@ services:
     volumes:
       - ./.localdata/photos:/srv/photos:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # Cloudflare Tunnel not needed in local dev — disable it
+  cloudflared:
+    profiles: ["vm-only"]
