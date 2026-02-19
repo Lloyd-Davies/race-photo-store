@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import uuid as _uuid
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException
@@ -40,32 +41,16 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     price_obj = stripe.Price.retrieve(settings.STRIPE_PRICE_ID)
     unit_amount_pence: int = price_obj.unit_amount or 0
 
-    # Create Stripe Checkout session
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        line_items=[
-            {
-                "price": settings.STRIPE_PRICE_ID,
-                "quantity": count,
-            }
-        ],
-        customer_email=cart.email or None,
-        metadata={
-            "cart_id": str(cart.id),
-            "event_id": str(cart.event_id),
-        },
-        success_url=f"{settings.PUBLIC_BASE_URL}/order/{{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{settings.PUBLIC_BASE_URL}/",
-    )
-
-    # Persist order in PENDING state; items hold the price at time of checkout
+    # Create the order row first so we can use the numeric ID in the Stripe
+    # success URL. The stripe_session_id gets a unique placeholder until the
+    # real session ID is available a few lines below.
     order = Order(
-        stripe_session_id=session.id,
+        stripe_session_id=f"pending_{_uuid.uuid4()}",
         email=cart.email or "",
         status=OrderStatus.PENDING,
     )
     db.add(order)
-    db.flush()  # get order.id without committing
+    db.flush()  # assigns order.id without committing
 
     for photo_id in photo_ids:
         db.add(
@@ -76,6 +61,18 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
             )
         )
 
+    # Create Stripe Checkout session — success URL uses our numeric order ID
+    # so the frontend can poll GET /api/orders/{order_id} immediately on return.
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{"price": settings.STRIPE_PRICE_ID, "quantity": count}],
+        customer_email=cart.email or None,
+        metadata={"cart_id": str(cart.id), "event_id": str(cart.event_id)},
+        success_url=f"{settings.PUBLIC_BASE_URL}/orders/{order.id}",
+        cancel_url=f"{settings.PUBLIC_BASE_URL}/",
+    )
+
+    order.stripe_session_id = session.id
     db.commit()
     db.refresh(order)
 
