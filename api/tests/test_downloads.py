@@ -33,7 +33,9 @@ def _setup_delivery(db_session, tmp_path, max_downloads=5, days_until_expiry=30,
     return delivery
 
 
-def test_download_returns_accel_redirect(client, db_session, tmp_path):
+def test_download_returns_accel_redirect(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
     delivery = _setup_delivery(db_session, tmp_path)
     resp = client.get(f"/d/{delivery.token}")
     assert resp.status_code == 200
@@ -41,26 +43,34 @@ def test_download_returns_accel_redirect(client, db_session, tmp_path):
     assert delivery.token  # basic sanity
 
 
-def test_download_increments_count(client, db_session, tmp_path):
+def test_download_increments_count(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
     delivery = _setup_delivery(db_session, tmp_path)
     client.get(f"/d/{delivery.token}")
     db_session.refresh(delivery)
     assert delivery.download_count == 1
 
 
-def test_download_content_disposition(client, db_session, tmp_path):
+def test_download_content_disposition(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
     delivery = _setup_delivery(db_session, tmp_path)
     resp = client.get(f"/d/{delivery.token}")
     assert "test-event" in resp.headers["content-disposition"]
 
 
-def test_download_expired_token(client, db_session, tmp_path):
+def test_download_expired_token(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
     delivery = _setup_delivery(db_session, tmp_path, days_until_expiry=-1)
     resp = client.get(f"/d/{delivery.token}")
     assert resp.status_code == 410
 
 
-def test_download_limit_reached(client, db_session, tmp_path):
+def test_download_limit_reached(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
     delivery = _setup_delivery(db_session, tmp_path, max_downloads=3, download_count=3)
     resp = client.get(f"/d/{delivery.token}")
     assert resp.status_code == 410
@@ -69,3 +79,21 @@ def test_download_limit_reached(client, db_session, tmp_path):
 def test_download_unknown_token(client):
     resp = client.get("/d/not-a-real-token")
     assert resp.status_code == 404
+
+
+def test_download_zip_not_ready_returns_409_and_does_not_increment(
+    client, db_session, tmp_path, monkeypatch
+):
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
+    delivery = _setup_delivery(db_session, tmp_path)
+
+    zip_path = tmp_path / delivery.zip_path
+    zip_path.unlink()
+
+    resp = client.get(f"/d/{delivery.token}")
+    assert resp.status_code == 409
+
+    db_session.refresh(delivery)
+    assert delivery.download_count == 0

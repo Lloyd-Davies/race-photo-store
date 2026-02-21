@@ -61,6 +61,7 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
                     zf.write(original, arcname=f"{photo_id}.jpg")
 
             shutil.move(tmp_path, final_zip)
+            os.chmod(final_zip, 0o644)
 
         except Exception:
             if os.path.exists(tmp_path):

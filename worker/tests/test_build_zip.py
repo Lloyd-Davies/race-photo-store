@@ -5,6 +5,7 @@ SessionLocal is monkeypatched to return the test's transactional session.
 """
 
 import importlib
+import os
 import sys
 import zipfile
 from datetime import datetime, timezone
@@ -95,6 +96,23 @@ def test_build_zip_creates_zip_file(db_session, tmp_path, monkeypatch):
     assert zip_path.exists()
     with zipfile.ZipFile(zip_path) as zf:
         assert len(zf.namelist()) == 3
+
+
+def test_build_zip_sets_readable_permissions(db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    bz_module = _get_bz_module()
+
+    storage = tmp_path / "photos"
+    order = _seed(db_session, storage)
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+
+    _get_build_zip_task().apply(args=[order.id])
+
+    zip_path = storage / "zips" / f"order-{order.id}.zip"
+    mode = os.stat(zip_path).st_mode
+    assert mode & 0o004
 
 
 def test_build_zip_marks_order_ready(db_session, tmp_path, monkeypatch):

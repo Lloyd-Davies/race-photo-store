@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from photostore.config import settings
 from photostore.models import Delivery
 
 router = APIRouter(tags=["downloads"])
@@ -22,6 +24,10 @@ def download(token: str, db: Session = Depends(get_db)) -> Response:
 
     if delivery.download_count >= delivery.max_downloads:
         raise HTTPException(410, "Download limit reached")
+
+    zip_abs_path = Path(settings.STORAGE_ROOT) / delivery.zip_path
+    if not zip_abs_path.exists():
+        raise HTTPException(409, "ZIP is not ready yet")
 
     # Increment before responding so partial connections still consume a count
     delivery.download_count += 1
