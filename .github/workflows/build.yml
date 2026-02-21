@@ -3,6 +3,7 @@ name: Build & push images
 on:
   push:
     branches: [dev, main]
+    tags: ['v*']
 
 jobs:
   build:
@@ -33,6 +34,40 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute image tags
+        id: image_tags
+        shell: bash
+        run: |
+          REF="${GITHUB_REF}"
+          REF_NAME="${GITHUB_REF_NAME}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          build_tags() {
+            local service="$1"
+            if [[ "$REF" == refs/tags/v* ]]; then
+              printf "%s/%s:%s" "$IMAGE_PREFIX" "$service" "$REF_NAME"
+            elif [[ "$REF" == "refs/heads/main" ]]; then
+              printf "%s/%s:latest\n%s/%s:main-%s" "$IMAGE_PREFIX" "$service" "$IMAGE_PREFIX" "$service" "$SHORT_SHA"
+            else
+              printf "%s/%s:dev-latest\n%s/%s:dev-%s" "$IMAGE_PREFIX" "$service" "$IMAGE_PREFIX" "$service" "$SHORT_SHA"
+            fi
+          }
+
+          {
+            echo "api_tags<<EOF"
+            build_tags "api"
+            echo
+            echo "EOF"
+            echo "worker_tags<<EOF"
+            build_tags "worker"
+            echo
+            echo "EOF"
+            echo "nginx_tags<<EOF"
+            build_tags "nginx"
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       # ── API ─────────────────────────────────────────────────────────────
       - name: Build & push api
         uses: docker/build-push-action@v5
@@ -41,7 +76,7 @@ jobs:
           file: api/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE_PREFIX }}/api:latest
+          tags: ${{ steps.image_tags.outputs.api_tags }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
@@ -53,7 +88,7 @@ jobs:
           file: worker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE_PREFIX }}/worker:latest
+          tags: ${{ steps.image_tags.outputs.worker_tags }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
 
@@ -65,6 +100,6 @@ jobs:
           file: nginx/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE_PREFIX }}/nginx:latest
+          tags: ${{ steps.image_tags.outputs.nginx_tags }}
           cache-from: type=gha,scope=nginx
           cache-to: type=gha,mode=max,scope=nginx

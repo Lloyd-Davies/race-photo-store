@@ -163,6 +163,17 @@ Suggested release steps:
 4) (Optional) Publish GitHub Release notes for that tag.
 5) In Portainer, redeploy pinned version if you adopt versioned image tags later; with `:latest`, redeploy immediately after merge.
 
+Image tag behavior from CI:
+
+- `dev` pushes: `dev-latest` and `dev-<shortsha>`
+- `main` pushes: `latest` and `main-<shortsha>`
+- `v*` tags (for example `v0.1.0`): immutable version tags like `api:v0.1.0`, `worker:v0.1.0`, `nginx:v0.1.0`
+
+Starting version recommendation:
+
+- Use SemVer with a `v` prefix.
+- First store release: `v0.1.0` (pre-1.0, feature-complete baseline).
+
 ## Operational notes
 
 - Download links are expiry-limited and count-limited.
