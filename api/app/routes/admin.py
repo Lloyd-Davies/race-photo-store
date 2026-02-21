@@ -27,6 +27,51 @@ from photostore.models import Delivery, Event, EventStatus, Order, OrderItem, Or
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+def _parse_exif_offset(raw_offset: str | None) -> timezone | None:
+    if not raw_offset:
+        return None
+    try:
+        raw = raw_offset.strip()
+        if len(raw) != 6 or raw[0] not in {"+", "-"} or raw[3] != ":":
+            return None
+        sign = 1 if raw[0] == "+" else -1
+        hours = int(raw[1:3])
+        minutes = int(raw[4:6])
+        return timezone(sign * timedelta(hours=hours, minutes=minutes))
+    except Exception:
+        return None
+
+
+def _extract_captured_at(image_path: Path) -> datetime | None:
+    if not image_path.exists():
+        return None
+
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+
+        dt_raw = exif.get(0x9003) or exif.get(0x0132)
+        if not dt_raw:
+            return None
+
+        dt_text = str(dt_raw).split(".")[0]
+        captured = datetime.strptime(dt_text, "%Y:%m:%d %H:%M:%S")
+
+        offset_raw = exif.get(0x9011) or exif.get(0x9010)
+        tz = _parse_exif_offset(str(offset_raw) if offset_raw else None)
+        if tz is None:
+            return captured.replace(tzinfo=timezone.utc)
+
+        return captured.replace(tzinfo=tz).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
 def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None) -> AdminOrderOut:
     return AdminOrderOut(
         id=order.id,
@@ -128,11 +173,15 @@ def ingest_photos(event_id: int, db: Session = Depends(get_db)) -> IngestResult:
 
         original = storage_root / "originals" / event.slug / f"{photo_id}.jpg"
         state = PhotoState.READY if original.exists() else PhotoState.MISSING
+        captured_at = _extract_captured_at(original)
+        if captured_at is None:
+            captured_at = _extract_captured_at(filepath)
 
         db.add(
             Photo(
                 id=photo_id,
                 event_id=event_id,
+                captured_at=captured_at,
                 proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
                 original_path=f"originals/{event.slug}/{photo_id}.jpg",
                 state=state,

@@ -74,6 +74,39 @@ def test_ingest_unknown_event(admin_client):
     assert resp.status_code == 404
 
 
+def test_ingest_sets_captured_at_from_exif(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    from PIL import Image
+    from photostore.config import settings
+    from photostore.models import Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    pid = "img-exif-001"
+    proof = storage / "proofs" / test_event.slug / f"{pid}.jpg"
+    original = storage / "originals" / test_event.slug / f"{pid}.jpg"
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    original.parent.mkdir(parents=True, exist_ok=True)
+
+    exif = Image.Exif()
+    exif[0x9003] = "2026:02:21 09:12:34"  # DateTimeOriginal
+    exif[0x0132] = "2026:02:21 09:12:34"  # DateTime
+
+    img = Image.new("RGB", (1000, 800), color=(120, 120, 120))
+    img.save(original, format="JPEG", exif=exif.tobytes())
+    img.save(proof, format="JPEG", exif=exif.tobytes())
+
+    resp = admin_client.post(f"/api/admin/events/{test_event.id}/ingest")
+    assert resp.status_code == 200
+    assert resp.json()["ingested"] == 1
+
+    photo = db_session.query(Photo).filter(Photo.id == pid).first()
+    assert photo is not None
+    assert photo.captured_at is not None
+    assert photo.captured_at.hour == 9
+    assert photo.captured_at.minute == 12
+
+
 def test_update_event_fields(admin_client, db_session, test_event):
     from photostore.models import Event
 
