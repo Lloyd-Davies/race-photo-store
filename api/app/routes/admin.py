@@ -9,6 +9,7 @@ from sqlalchemy import func
 
 from app.deps import get_db, require_admin
 from app.schemas import (
+    AdminStatsOut,
     AdminOrderListOut,
     AdminOrderOut,
     AdminResetDeliveryRequest,
@@ -17,11 +18,29 @@ from app.schemas import (
     CreateEventRequest,
     EventCreatedOut,
     IngestResult,
+    UpdateEventRequest,
 )
+from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import Delivery, Event, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
+from photostore.models import Delivery, Event, EventStatus, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None) -> AdminOrderOut:
+    return AdminOrderOut(
+        id=order.id,
+        status=order.status,
+        email=order.email,
+        created_at=order.created_at,
+        paid_at=order.paid_at,
+        item_count=item_count,
+        event_slug=delivery.event_slug if delivery else None,
+        download_count=delivery.download_count if delivery else None,
+        max_downloads=delivery.max_downloads if delivery else None,
+        expires_at=delivery.expires_at if delivery else None,
+        download_url=(f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}" if delivery else None),
+    )
 
 
 @router.post("/events", response_model=EventCreatedOut, dependencies=[Depends(require_admin)])
@@ -40,6 +59,41 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
     db.refresh(event)
 
     return EventCreatedOut(id=event.id, slug=event.slug)
+
+
+@router.patch("/events/{event_id}", dependencies=[Depends(require_admin)])
+def update_event(
+    event_id: int,
+    req: UpdateEventRequest,
+    db: Session = Depends(get_db),
+) -> EventCreatedOut:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    payload = req.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(400, "No fields supplied")
+
+    for field, value in payload.items():
+        setattr(event, field, value)
+
+    db.commit()
+    db.refresh(event)
+    return EventCreatedOut(id=event.id, slug=event.slug)
+
+
+@router.get("/stats", response_model=AdminStatsOut, dependencies=[Depends(require_admin)])
+def get_admin_stats(db: Session = Depends(get_db)) -> AdminStatsOut:
+    return AdminStatsOut(
+        total_events=db.query(Event).count(),
+        total_photos=db.query(Photo).count(),
+        total_orders=db.query(Order).count(),
+        total_deliveries=db.query(Delivery).count(),
+        pending_orders=db.query(Order).filter(Order.status == OrderStatus.PENDING).count(),
+        failed_orders=db.query(Order).filter(Order.status == OrderStatus.FAILED).count(),
+        active_events=db.query(Event).filter(Event.status == EventStatus.ACTIVE).count(),
+    )
 
 
 @router.post(
@@ -172,21 +226,7 @@ def list_orders(
 
     result: list[AdminOrderOut] = []
     for order, delivery, item_count in rows:
-        result.append(
-            AdminOrderOut(
-                id=order.id,
-                status=order.status,
-                email=order.email,
-                created_at=order.created_at,
-                paid_at=order.paid_at,
-                item_count=int(item_count or 0),
-                event_slug=delivery.event_slug if delivery else None,
-                download_count=delivery.download_count if delivery else None,
-                max_downloads=delivery.max_downloads if delivery else None,
-                expires_at=delivery.expires_at if delivery else None,
-                download_url=(f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}" if delivery else None),
-            )
-        )
+        result.append(_to_admin_order_out(order, int(item_count or 0), delivery))
 
     return AdminOrderListOut(orders=result)
 
@@ -227,16 +267,62 @@ def reset_delivery(
 
     item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
 
-    return AdminOrderOut(
-        id=order.id,
-        status=order.status,
-        email=order.email,
-        created_at=order.created_at,
-        paid_at=order.paid_at,
-        item_count=item_count,
-        event_slug=delivery.event_slug,
-        download_count=delivery.download_count,
-        max_downloads=delivery.max_downloads,
-        expires_at=delivery.expires_at,
-        download_url=f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}",
-    )
+    return _to_admin_order_out(order, item_count, delivery)
+
+
+@router.post(
+    "/orders/{order_id}/expire-delivery",
+    response_model=AdminOrderOut,
+    dependencies=[Depends(require_admin)],
+)
+def expire_delivery(order_id: int, db: Session = Depends(get_db)) -> AdminOrderOut:
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
+    if not delivery:
+        raise HTTPException(409, "Order does not have a delivery yet")
+
+    delivery.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    order.status = OrderStatus.EXPIRED
+    db.commit()
+    db.refresh(delivery)
+    db.refresh(order)
+
+    item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
+    return _to_admin_order_out(order, item_count, delivery)
+
+
+@router.post(
+    "/orders/{order_id}/rebuild-zip",
+    response_model=AdminOrderOut,
+    dependencies=[Depends(require_admin)],
+)
+def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrderOut:
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    if order.status == OrderStatus.PENDING:
+        raise HTTPException(409, "Order is not paid yet")
+
+    if order.status == OrderStatus.BUILDING:
+        raise HTTPException(409, "Order ZIP is already building")
+
+    delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
+    if delivery:
+        zip_abs_path = Path(settings.STORAGE_ROOT) / delivery.zip_path
+        if zip_abs_path.exists():
+            zip_abs_path.unlink()
+        db.delete(delivery)
+        db.flush()
+
+    order.status = OrderStatus.PAID
+    db.commit()
+
+    celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+
+    db.refresh(order)
+    item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
+    return _to_admin_order_out(order, item_count, None)

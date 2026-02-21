@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, UploadCloud, CalendarDays, MapPin } from 'lucide-react'
-import { fetchEvents, createEvent, type Event } from '../../api/events'
+import { Plus, UploadCloud, CalendarDays, MapPin, Pencil } from 'lucide-react'
+import { fetchEvents, createEvent, updateEvent, type Event } from '../../api/events'
 import Button from '../../components/Button'
 import { Skeleton } from '../../components/Skeleton'
 
@@ -14,6 +14,13 @@ interface CreateForm {
 }
 
 const EMPTY_FORM: CreateForm = { slug: '', name: '', date: '', location: '' }
+
+interface EditForm {
+  name: string
+  date: string
+  location: string
+  status: Event['status']
+}
 
 function slugify(v: string) {
   return v
@@ -27,6 +34,8 @@ export default function AdminEvents() {
   const [form, setForm] = useState<CreateForm>(EMPTY_FORM)
   const [errors, setErrors] = useState<Partial<CreateForm>>({})
   const [showForm, setShowForm] = useState(false)
+  const [editingEventId, setEditingEventId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState<EditForm | null>(null)
 
   const { data: events, isLoading } = useQuery({
     queryKey: ['events'],
@@ -45,6 +54,21 @@ export default function AdminEvents() {
       qc.invalidateQueries({ queryKey: ['events'] })
       setForm(EMPTY_FORM)
       setShowForm(false)
+    },
+  })
+
+  const updateMut = useMutation({
+    mutationFn: ({ eventId, body }: { eventId: number; body: EditForm }) =>
+      updateEvent(eventId, {
+        name: body.name,
+        date: body.date,
+        location: body.location || undefined,
+        status: body.status,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events'] })
+      setEditingEventId(null)
+      setEditForm(null)
     },
   })
 
@@ -68,6 +92,21 @@ export default function AdminEvents() {
     if (!form.date) errs.date = 'Required'
     if (Object.keys(errs).length) { setErrors(errs); return }
     createMut.mutate()
+  }
+
+  function startEdit(event: Event) {
+    setEditingEventId(event.id)
+    setEditForm({
+      name: event.name,
+      date: event.date.slice(0, 10),
+      location: event.location ?? '',
+      status: event.status,
+    })
+  }
+
+  function saveEdit(eventId: number) {
+    if (!editForm || !editForm.name || !editForm.date) return
+    updateMut.mutate({ eventId, body: editForm })
   }
 
   return (
@@ -158,20 +197,52 @@ export default function AdminEvents() {
               className="bg-surface-900 border border-surface-700 rounded-xl p-4 flex items-center gap-4"
             >
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-100 truncate">{event.name}</p>
-                <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <CalendarDays size={11} />
-                    {new Date(event.date).toLocaleDateString('en-GB')}
-                  </span>
-                  {event.location && (
-                    <span className="flex items-center gap-1">
-                      <MapPin size={11} />
-                      {event.location}
-                    </span>
-                  )}
-                  <code className="text-surface-500">{event.slug}</code>
-                </div>
+                {editingEventId === event.id && editForm ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input
+                      value={editForm.name}
+                      onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                      className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2"
+                    />
+                    <input
+                      type="date"
+                      value={editForm.date}
+                      onChange={(e) => setEditForm((prev) => (prev ? { ...prev, date: e.target.value } : prev))}
+                      className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2"
+                    />
+                    <input
+                      value={editForm.location}
+                      onChange={(e) => setEditForm((prev) => (prev ? { ...prev, location: e.target.value } : prev))}
+                      placeholder="Location"
+                      className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2"
+                    />
+                    <select
+                      value={editForm.status}
+                      onChange={(e) => setEditForm((prev) => (prev ? { ...prev, status: e.target.value as Event['status'] } : prev))}
+                      className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2"
+                    >
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="ARCHIVED">ARCHIVED</option>
+                    </select>
+                  </div>
+                ) : (
+                  <>
+                    <p className="font-medium text-gray-100 truncate">{event.name}</p>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <CalendarDays size={11} />
+                        {new Date(event.date).toLocaleDateString('en-GB')}
+                      </span>
+                      {event.location && (
+                        <span className="flex items-center gap-1">
+                          <MapPin size={11} />
+                          {event.location}
+                        </span>
+                      )}
+                      <code className="text-surface-500">{event.slug}</code>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -184,6 +255,36 @@ export default function AdminEvents() {
                 >
                   {event.status}
                 </span>
+                {editingEventId === event.id ? (
+                  <>
+                    <Button
+                      size="sm"
+                      onClick={() => saveEdit(event.id)}
+                      loading={updateMut.isPending}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setEditingEventId(null)
+                        setEditForm(null)
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => startEdit(event)}
+                  >
+                    <Pencil size={14} className="mr-1" />
+                    Edit
+                  </Button>
+                )}
                 <Link to={`/admin/events/${event.id}/ingest`}>
                   <Button variant="secondary" size="sm">
                     <UploadCloud size={14} className="mr-1" />

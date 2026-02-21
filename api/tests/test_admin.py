@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 # ── Create event ──────────────────────────────────────────────────────────────
@@ -71,6 +72,26 @@ def test_ingest_skips_existing_photos(admin_client, test_event, test_photos):
 def test_ingest_unknown_event(admin_client):
     resp = admin_client.post("/api/admin/events/99999/ingest")
     assert resp.status_code == 404
+
+
+def test_update_event_fields(admin_client, db_session, test_event):
+    from photostore.models import Event
+
+    resp = admin_client.patch(
+        f"/api/admin/events/{test_event.id}",
+        json={
+            "name": "Updated Name",
+            "date": "2026-03-02T10:30:00Z",
+            "location": "Updated Location",
+            "status": "ARCHIVED",
+        },
+    )
+    assert resp.status_code == 200
+
+    refreshed = db_session.query(Event).filter(Event.id == test_event.id).first()
+    assert refreshed.name == "Updated Name"
+    assert refreshed.location == "Updated Location"
+    assert refreshed.status.value == "ARCHIVED"
 
 
 # ── Bib tags ──────────────────────────────────────────────────────────────────
@@ -155,3 +176,49 @@ def test_admin_reset_delivery_rotates_and_resets(admin_client, db_session, test_
     assert data["download_count"] == 0
     assert data["max_downloads"] == 7
     assert old_token not in data["download_url"]
+
+
+def test_admin_expire_delivery_sets_status_expired(admin_client, db_session, test_photos):
+    from datetime import datetime, timezone
+    from photostore.models import Delivery, Order
+
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.post(f"/api/admin/orders/{order.id}/expire-delivery")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "EXPIRED"
+
+    delivery = db_session.query(Delivery).filter(Delivery.order_id == order.id).first()
+    db_order = db_session.query(Order).filter(Order.id == order.id).first()
+    assert delivery.expires_at <= datetime.now(timezone.utc)
+    assert db_order.status.value == "EXPIRED"
+
+
+def test_admin_rebuild_zip_enqueues_and_clears_delivery(
+    admin_client,
+    db_session,
+    test_photos,
+    mock_celery_send_task,
+):
+    from photostore.config import settings
+    from photostore.models import Delivery, Order
+
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+    delivery = db_session.query(Delivery).filter(Delivery.order_id == order.id).first()
+
+    zip_abs = Path(settings.STORAGE_ROOT) / delivery.zip_path
+    zip_abs.parent.mkdir(parents=True, exist_ok=True)
+    zip_abs.write_bytes(b"PK")
+
+    resp = admin_client.post(f"/api/admin/orders/{order.id}/rebuild-zip")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "PAID"
+
+    remaining = db_session.query(Delivery).filter(Delivery.order_id == order.id).first()
+    db_order = db_session.query(Order).filter(Order.id == order.id).first()
+    assert remaining is None
+    assert db_order.status.value == "PAID"
+    assert not zip_abs.exists()
+
+    mock_celery_send_task.assert_called_with("tasks.build_zip.build_zip", args=[order.id])

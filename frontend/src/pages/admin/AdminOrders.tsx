@@ -1,8 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link2, RotateCcw, Search, ClipboardCopy } from 'lucide-react'
+import { Link2, RotateCcw, Search, ClipboardCopy, RefreshCw, Ban } from 'lucide-react'
 import Button from '../../components/Button'
-import { fetchAdminOrders, resetAdminOrderDelivery, type AdminOrder } from '../../api/adminOrders'
+import {
+  expireAdminOrderDelivery,
+  fetchAdminOrders,
+  rebuildAdminOrderZip,
+  resetAdminOrderDelivery,
+  type AdminOrder,
+} from '../../api/adminOrders'
 import type { OrderStatus } from '../../api/orders'
 
 const ORDER_STATUSES: Array<OrderStatus | 'ALL'> = [
@@ -46,6 +52,16 @@ export default function AdminOrders() {
         days_valid: 30,
         max_downloads: order.max_downloads ?? 5,
       }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-orders'] }),
+  })
+
+  const rebuildMut = useMutation({
+    mutationFn: (orderId: number) => rebuildAdminOrderZip(orderId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-orders'] }),
+  })
+
+  const expireMut = useMutation({
+    mutationFn: (orderId: number) => expireAdminOrderDelivery(orderId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-orders'] }),
   })
 
@@ -140,6 +156,28 @@ export default function AdminOrders() {
               >
                 <RotateCcw size={13} className="mr-1" />
                 Reset delivery access
+              </Button>
+
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => rebuildMut.mutate(order.id)}
+                loading={rebuildMut.isPending}
+                disabled={order.status === 'PENDING' || order.status === 'BUILDING'}
+              >
+                <RefreshCw size={13} className="mr-1" />
+                Rebuild ZIP
+              </Button>
+
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => expireMut.mutate(order.id)}
+                loading={expireMut.isPending}
+                disabled={!order.download_url}
+              >
+                <Ban size={13} className="mr-1" />
+                Expire link
               </Button>
             </div>
           </div>

@@ -32,3 +32,9 @@ export const resetAdminOrderDelivery = (
   orderId: number,
   body: { rotate_token: boolean; days_valid: number; max_downloads?: number }
 ) => apiPost<AdminOrder>(`/admin/orders/${orderId}/reset-delivery`, body)
+
+export const rebuildAdminOrderZip = (orderId: number) =>
+  apiPost<AdminOrder>(`/admin/orders/${orderId}/rebuild-zip`)
+
+export const expireAdminOrderDelivery = (orderId: number) =>
+  apiPost<AdminOrder>(`/admin/orders/${orderId}/expire-delivery`)

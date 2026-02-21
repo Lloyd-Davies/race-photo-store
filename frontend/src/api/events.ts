@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPatch, apiPost } from './client'
 
 export interface Event {
   id: number
@@ -7,6 +7,8 @@ export interface Event {
   date: string
   location?: string
   status: 'ACTIVE' | 'ARCHIVED'
+  public_until?: string
+  archive_after?: string
 }
 
 export interface Photo {
@@ -54,6 +56,18 @@ export const fetchPhotos = (
 
 export const createEvent = (body: { slug: string; name: string; date: string; location?: string }) =>
   apiPost<EventCreatedOut>('/admin/events', body)
+
+export const updateEvent = (
+  eventId: number,
+  body: {
+    name?: string
+    date?: string
+    location?: string | null
+    status?: 'ACTIVE' | 'ARCHIVED'
+    public_until?: string | null
+    archive_after?: string | null
+  }
+) => apiPatch<EventCreatedOut>(`/admin/events/${eventId}`, body)
 
 export const ingestPhotos = (eventId: number) =>
   apiPost<IngestResult>(`/admin/events/${eventId}/ingest`)

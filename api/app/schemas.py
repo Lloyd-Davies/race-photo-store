@@ -19,6 +19,8 @@ class EventOut(BaseModel):
     date: datetime
     location: Optional[str] = None
     status: EventStatus
+    public_until: Optional[datetime] = None
+    archive_after: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -96,6 +98,15 @@ class CreateEventRequest(BaseModel):
     location: Optional[str] = None
 
 
+class UpdateEventRequest(BaseModel):
+    name: Optional[str] = None
+    date: Optional[datetime] = None
+    location: Optional[str] = None
+    status: Optional[EventStatus] = None
+    public_until: Optional[datetime] = None
+    archive_after: Optional[datetime] = None
+
+
 class EventCreatedOut(BaseModel):
     id: int
     slug: str
@@ -142,3 +153,13 @@ class AdminResetDeliveryRequest(BaseModel):
     rotate_token: bool = True
     days_valid: int = 30
     max_downloads: Optional[int] = None
+
+
+class AdminStatsOut(BaseModel):
+    total_events: int
+    total_photos: int
+    total_orders: int
+    total_deliveries: int
+    pending_orders: int
+    failed_orders: int
+    active_events: int
