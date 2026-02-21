@@ -169,11 +169,6 @@ Image tag behavior from CI:
 - `main` pushes: `latest` and `main-<shortsha>`
 - `v*` tags (for example `v0.1.0`): immutable version tags like `api:v0.1.0`, `worker:v0.1.0`, `nginx:v0.1.0`
 
-Starting version recommendation:
-
-- Use SemVer with a `v` prefix.
-- First store release: `v0.1.0` (pre-1.0, feature-complete baseline).
-
 ## Operational notes
 
 - Download links are expiry-limited and count-limited.

@@ -1,10 +1,13 @@
-interface SkeletonProps {
+import type { HTMLAttributes } from 'react'
+
+interface SkeletonProps extends HTMLAttributes<HTMLDivElement> {
   className?: string
 }
 
-export function Skeleton({ className = '' }: SkeletonProps) {
+export function Skeleton({ className = '', ...props }: SkeletonProps) {
   return (
     <div
+      {...props}
       className={`bg-surface-800 rounded animate-pulse ${className}`}
       aria-hidden
     />

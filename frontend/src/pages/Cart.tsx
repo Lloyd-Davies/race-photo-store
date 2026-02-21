@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Trash2, ArrowLeft, Mail } from 'lucide-react'
 import { useMutation } from '@tanstack/react-query'
 import { useCartStore } from '../store/cart'
@@ -12,7 +12,6 @@ export default function Cart() {
   const eventId = useCartStore((s) => s.eventId)
   const remove = useCartStore((s) => s.remove)
   const clear = useCartStore((s) => s.clear)
-  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
 
