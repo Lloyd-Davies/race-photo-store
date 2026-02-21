@@ -118,3 +118,27 @@ class BibTagsRequest(BaseModel):
 
 class BibTagsResult(BaseModel):
     added: int
+
+
+class AdminOrderOut(BaseModel):
+    id: int
+    status: OrderStatus
+    email: str
+    created_at: datetime
+    paid_at: Optional[datetime] = None
+    item_count: int
+    event_slug: Optional[str] = None
+    download_count: Optional[int] = None
+    max_downloads: Optional[int] = None
+    expires_at: Optional[datetime] = None
+    download_url: Optional[str] = None
+
+
+class AdminOrderListOut(BaseModel):
+    orders: list[AdminOrderOut]
+
+
+class AdminResetDeliveryRequest(BaseModel):
+    rotate_token: bool = True
+    days_valid: int = 30
+    max_downloads: Optional[int] = None

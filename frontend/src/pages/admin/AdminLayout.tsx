@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { CalendarDays, LogOut, ShieldAlert } from 'lucide-react'
+import { CalendarDays, LogOut, ShieldAlert, ReceiptText } from 'lucide-react'
 import Button from '../../components/Button'
 
 const ADMIN_TOKEN_KEY = 'adminToken'
@@ -80,6 +80,20 @@ export default function AdminLayout() {
         >
           <CalendarDays size={16} />
           Events
+        </NavLink>
+
+        <NavLink
+          to="/admin/orders"
+          className={({ isActive }) =>
+            `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              isActive
+                ? 'bg-sky-500/20 text-sky-500'
+                : 'text-content-muted hover:bg-surface-800 hover:text-content'
+            }`
+          }
+        >
+          <ReceiptText size={16} />
+          Orders
         </NavLink>
 
         <div className="!mt-6">
