@@ -94,6 +94,13 @@ export default function PhotoCard({ photo, eventId, onFullscreen }: PhotoCardPro
           <Maximize2 size={20} className="drop-shadow" />
         </button>
       )}
+      {/* Photo ID badge — bottom-centre, derived from photo_id (last segment) */}
+      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 pointer-events-none">
+        <span className="bg-black/65 text-white text-xs font-mono px-2 py-0.5 rounded-full select-none">
+          {photo.photo_id.split('-').slice(-1)[0]}
+        </span>
+      </div>
+
     </div>
   )
 }
