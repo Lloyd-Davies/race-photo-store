@@ -38,9 +38,17 @@ export interface BibTagsResult {
 
 export const fetchEvents = () => apiGet<Event[]>('/events')
 
-export const fetchPhotos = (eventId: number, page = 1, bib?: string) => {
+export const fetchPhotos = (
+  eventId: number,
+  page = 1,
+  bib?: string,
+  startTime?: string,
+  endTime?: string,
+) => {
   const params = new URLSearchParams({ page: String(page), page_size: '60' })
   if (bib) params.set('bib', bib)
+  if (startTime) params.set('start_time', startTime)
+  if (endTime) params.set('end_time', endTime)
   return apiGet<PhotoListResponse>(`/events/${eventId}/photos?${params}`)
 }
 

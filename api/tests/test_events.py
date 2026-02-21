@@ -56,3 +56,23 @@ def test_list_photos_unknown_event(client):
     resp = client.get("/api/events/99999/photos")
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
+
+
+def test_list_photos_time_filter(client, db_session, test_event, test_photos):
+    from datetime import datetime, timezone
+
+    test_photos[0].captured_at = datetime(2026, 2, 18, 9, 5, tzinfo=timezone.utc)
+    test_photos[1].captured_at = datetime(2026, 2, 18, 9, 45, tzinfo=timezone.utc)
+    test_photos[2].captured_at = datetime(2026, 2, 18, 10, 15, tzinfo=timezone.utc)
+    db_session.flush()
+
+    resp = client.get(f"/api/events/{test_event.id}/photos?start_time=09:30&end_time=10:00")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["photos"][0]["photo_id"] == test_photos[1].id
+
+
+def test_list_photos_time_filter_invalid_format(client, test_event, test_photos):
+    resp = client.get(f"/api/events/{test_event.id}/photos?start_time=9am")
+    assert resp.status_code == 400

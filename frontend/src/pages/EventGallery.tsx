@@ -1,19 +1,25 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Search, ShoppingCart } from 'lucide-react'
+import { ArrowLeft, Search, ShoppingCart, X } from 'lucide-react'
 import { fetchPhotos, fetchEvents } from '../api/events'
 import { useCartStore } from '../store/cart'
 import PhotoCard from '../components/PhotoCard'
 import { PhotoSkeleton } from '../components/Skeleton'
 import Button from '../components/Button'
+import type { Photo } from '../api/events'
 
 export default function EventGallery() {
   const { eventId } = useParams<{ eventId: string }>()
   const id = Number(eventId)
   const [page, setPage] = useState(1)
   const [bibInput, setBibInput] = useState('')
+  const [startTimeInput, setStartTimeInput] = useState('')
+  const [endTimeInput, setEndTimeInput] = useState('')
   const [bib, setBib] = useState<string | undefined>()
+  const [startTime, setStartTime] = useState<string | undefined>()
+  const [endTime, setEndTime] = useState<string | undefined>()
+  const [activePhoto, setActivePhoto] = useState<Photo | null>(null)
   const cartCount = useCartStore((s) => s.items.length)
 
   const { data: events } = useQuery({
@@ -24,8 +30,8 @@ export default function EventGallery() {
   const event = events?.find((e) => e.id === id)
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['photos', id, page, bib],
-    queryFn: () => fetchPhotos(id, page, bib),
+    queryKey: ['photos', id, page, bib, startTime, endTime],
+    queryFn: () => fetchPhotos(id, page, bib, startTime, endTime),
     enabled: !isNaN(id),
     placeholderData: (prev) => prev,
   })
@@ -33,6 +39,8 @@ export default function EventGallery() {
   function handleBibSearch(e: React.FormEvent) {
     e.preventDefault()
     setBib(bibInput.trim() || undefined)
+    setStartTime(startTimeInput || undefined)
+    setEndTime(endTimeInput || undefined)
     setPage(1)
   }
 
@@ -63,7 +71,7 @@ export default function EventGallery() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Bib search */}
+          {/* Filters */}
           <form onSubmit={handleBibSearch} className="flex gap-2">
             <input
               type="text"
@@ -72,15 +80,37 @@ export default function EventGallery() {
               placeholder="Bib number…"
               className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-1.5 w-32 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
             />
+            <input
+              type="time"
+              value={startTimeInput}
+              onChange={(e) => setStartTimeInput(e.target.value)}
+              title="Start time"
+              className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            />
+            <input
+              type="time"
+              value={endTimeInput}
+              onChange={(e) => setEndTimeInput(e.target.value)}
+              title="End time"
+              className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            />
             <Button type="submit" size="sm" variant="secondary">
               <Search size={14} />
             </Button>
-            {bib && (
+            {(bib || startTime || endTime) && (
               <Button
                 size="sm"
                 variant="ghost"
                 type="button"
-                onClick={() => { setBib(undefined); setBibInput('') }}
+                onClick={() => {
+                  setBib(undefined)
+                  setStartTime(undefined)
+                  setEndTime(undefined)
+                  setBibInput('')
+                  setStartTimeInput('')
+                  setEndTimeInput('')
+                  setPage(1)
+                }}
               >
                 Clear
               </Button>
@@ -106,14 +136,19 @@ export default function EventGallery() {
       )}
       {data && data.photos.length === 0 && (
         <p className="text-gray-500 text-sm text-center py-12">
-          {bib ? `No photos found for bib #${bib}.` : 'No photos in this event yet.'}
+          {bib || startTime || endTime ? 'No photos found for this filter set.' : 'No photos in this event yet.'}
         </p>
       )}
       {data && data.photos.length > 0 && (
         <>
           <div className="masonry">
             {data.photos.map((photo) => (
-              <PhotoCard key={photo.photo_id} photo={photo} eventId={id} />
+              <PhotoCard
+                key={photo.photo_id}
+                photo={photo}
+                eventId={id}
+                onFullscreen={setActivePhoto}
+              />
             ))}
           </div>
 
@@ -142,6 +177,29 @@ export default function EventGallery() {
             </div>
           )}
         </>
+      )}
+
+      {activePhoto && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setActivePhoto(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            className="absolute top-4 right-4 text-white"
+            onClick={() => setActivePhoto(null)}
+            aria-label="Close fullscreen viewer"
+          >
+            <X size={28} />
+          </button>
+          <img
+            src={activePhoto.proof_url}
+            alt={`Photo ${activePhoto.photo_id}`}
+            className="max-w-full max-h-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   )

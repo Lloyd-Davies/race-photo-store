@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, PlusCircle } from 'lucide-react'
+import { CheckCircle2, Maximize2, PlusCircle } from 'lucide-react'
 import { useCartStore } from '../store/cart'
 import { useIntersection } from '../hooks/useIntersection'
 import type { Photo } from '../api/events'
@@ -7,9 +7,10 @@ import type { Photo } from '../api/events'
 interface PhotoCardProps {
   photo: Photo
   eventId: number
+  onFullscreen?: (photo: Photo) => void
 }
 
-export default function PhotoCard({ photo, eventId }: PhotoCardProps) {
+export default function PhotoCard({ photo, eventId, onFullscreen }: PhotoCardProps) {
   const [ref, isVisible] = useIntersection({ rootMargin: '200px' })
   const [loaded, setLoaded] = useState(false)
   const inCart = useCartStore((s) => s.has(photo.photo_id))
@@ -23,6 +24,11 @@ export default function PhotoCard({ photo, eventId }: PhotoCardProps) {
     } else {
       add({ photoId: photo.photo_id, eventId, proofUrl: photo.proof_url })
     }
+  }
+
+  function openFullscreen(e: React.MouseEvent) {
+    e.stopPropagation()
+    onFullscreen?.(photo)
   }
 
   return (
@@ -77,6 +83,17 @@ export default function PhotoCard({ photo, eventId }: PhotoCardProps) {
           <PlusCircle size={22} className="text-white drop-shadow" />
         )}
       </button>
+
+      {/* Fullscreen action */}
+      {onFullscreen && (
+        <button
+          onClick={openFullscreen}
+          className="absolute top-2 left-2 transition-opacity duration-200 opacity-0 group-hover:opacity-100 focus:opacity-100 text-white"
+          aria-label="Open fullscreen viewer"
+        >
+          <Maximize2 size={20} className="drop-shadow" />
+        </button>
+      )}
     </div>
   )
 }
