@@ -125,6 +125,7 @@ class BibTagEntry(BaseModel):
 
 class BibTagsRequest(BaseModel):
     tags: list[BibTagEntry]
+    replace: bool = False  # When True, clears existing bib tags for the event before inserting
 
 
 class BibTagsResult(BaseModel):

@@ -209,6 +209,14 @@ def upload_bib_tags(
         raise HTTPException(404, "Event not found")
 
     added = 0
+    if req.replace:
+        db.query(PhotoTag).filter(
+            PhotoTag.photo_id.in_(
+                db.query(Photo.id).filter(Photo.event_id == event_id)
+            ),
+            PhotoTag.tag_type == "bib",
+        ).delete(synchronize_session="fetch")
+
     for entry in req.tags:
         exists = (
             db.query(PhotoTag)
