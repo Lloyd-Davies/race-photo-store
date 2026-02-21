@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func
@@ -16,6 +16,7 @@ from app.schemas import (
     BibTagsRequest,
     BibTagsResult,
     CreateEventRequest,
+    PhotoUploadResult,
     EventCreatedOut,
     IngestResult,
     UpdateEventRequest,
@@ -231,6 +232,77 @@ def upload_bib_tags(
 
     db.commit()
     return BibTagsResult(added=added)
+
+
+@router.post(
+    "/events/{event_id}/photos",
+    response_model=PhotoUploadResult,
+    dependencies=[Depends(require_admin)],
+)
+def upload_photo(
+    event_id: int,
+    photo_id: str = Form(...),
+    kind: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> PhotoUploadResult:
+    """Upload a single image (original or proof) for an event.
+
+    Saves to {STORAGE_ROOT}/{kind}s/{slug}/{photo_id}.jpg and creates or
+    updates the Photo DB record. kind must be 'original' or 'proof'.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+    if kind not in ("original", "proof"):
+        raise HTTPException(400, "kind must be 'original' or 'proof'")
+
+    storage_root = Path(settings.STORAGE_ROOT)
+    dest_dir = storage_root / f"{kind}s" / event.slug
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / f"{photo_id}.jpg"
+
+    data = file.file.read()
+    dest_path.write_bytes(data)
+
+    existing = db.query(Photo).filter(Photo.id == photo_id).first()
+    created = existing is None
+
+    if kind == "proof":
+        if existing is None:
+            db.add(Photo(
+                id=photo_id,
+                event_id=event_id,
+                proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
+                original_path=f"originals/{event.slug}/{photo_id}.jpg",
+                state=PhotoState.MISSING,
+            ))
+        else:
+            existing.proof_path = f"proofs/{event.slug}/{photo_id}.jpg"
+    else:  # original
+        captured_at = _extract_captured_at(dest_path)
+        if existing is None:
+            db.add(Photo(
+                id=photo_id,
+                event_id=event_id,
+                captured_at=captured_at,
+                proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
+                original_path=f"originals/{event.slug}/{photo_id}.jpg",
+                state=PhotoState.READY,
+            ))
+        else:
+            existing.original_path = f"originals/{event.slug}/{photo_id}.jpg"
+            existing.state = PhotoState.READY
+            if captured_at:
+                existing.captured_at = captured_at
+
+    db.commit()
+    return PhotoUploadResult(
+        photo_id=photo_id,
+        kind=kind,
+        size_bytes=len(data),
+        created=created,
+    )
 
 
 @router.get("/orders", response_model=AdminOrderListOut, dependencies=[Depends(require_admin)])

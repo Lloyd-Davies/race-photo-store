@@ -131,6 +131,13 @@ class BibTagsResult(BaseModel):
     added: int
 
 
+class PhotoUploadResult(BaseModel):
+    photo_id: str
+    kind: str        # "original" | "proof"
+    size_bytes: int
+    created: bool    # True → new DB record, False → updated existing
+
+
 class AdminOrderOut(BaseModel):
     id: int
     status: OrderStatus
