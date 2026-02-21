@@ -1,8 +1,10 @@
 # race-photo-store
 
-Self-hosted sports event photo proofing and sales platform. Athletes browse public watermarked proofs, select photos, pay via Stripe, and receive a ZIP of full-resolution originals.
+Self-hosted sports event photo proofing and sales platform.
 
-## Stack
+Athletes browse public watermarked proofs, select images, pay via Stripe Checkout, and download a ZIP of full-resolution originals.
+
+## Architecture
 
 | Service | Technology |
 |---|---|
@@ -11,74 +13,95 @@ Self-hosted sports event photo proofing and sales platform. Athletes browse publ
 | Database | PostgreSQL 16 |
 | Broker/Cache | Redis 7 |
 | Reverse proxy | Nginx |
-| Infrastructure | Oracle Cloud ARM64 VM, Portainer, Cloudflare Tunnel |
+| Frontend | React + Vite + Tailwind |
+| Deployment | Docker Compose + Portainer + Cloudflare Tunnel |
 
-## Repo structure
+## Key capabilities
 
-```
-shared/          # Python package installed into both api + worker images
-  photostore/
-    config.py    # pydantic-settings — all env vars
-    models.py    # SQLAlchemy ORM models
-    db.py        # Engine + session factory
-    celery_app.py
+- Public event gallery with proof image browsing
+- Bib search and time-of-day filtering (`start_time`, `end_time`)
+- Fullscreen proof viewer from gallery cards
+- Stripe Checkout order flow
+- Async ZIP generation in worker
+- Tokenized download links served through nginx `X-Accel-Redirect`
+- Admin event ingest + bib tagging
+- Admin order management and delivery reset tools
 
-api/
-  app/
-    main.py      # FastAPI app
-    routes/      # One file per route group
-    schemas.py   # Pydantic request/response models
-    deps.py
-  alembic/       # DB migrations (run automatically on container start)
-  Dockerfile
+## Repository layout
 
-worker/
-  tasks/
-    build_zip.py    # build_zip(order_id)
-    archive.py      # archive_event / restore_event
-  Dockerfile
-
-nginx/
-  nginx.conf
-
+```text
+api/                # FastAPI application
+frontend/           # React/Vite frontend
+worker/             # Celery tasks (ZIP build etc.)
+shared/photostore/  # shared models/config/db package
+nginx/              # nginx config + image build
 docker-compose.yml
 .env.example
 ```
-
-## Local setup
-
-```bash
-cp .env.example .env
-# Fill in POSTGRES_PASSWORD, STRIPE_*, PUBLIC_BASE_URL, ADMIN_TOKEN
-
-docker build -t photostore-api:dev -f api/Dockerfile .
-docker build -t photostore-worker:dev -f worker/Dockerfile .
-docker compose up -d
-```
-
-> The nginx config is bind-mounted from the host at `/opt/photostore/nginx/nginx.conf`.  
-> Create this directory and copy `nginx/nginx.conf` there before starting the stack.
 
 ## Environment variables
 
 | Variable | Description |
 |---|---|
-| `POSTGRES_PASSWORD` | PostgreSQL password |
-| `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...`) |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
-| `STRIPE_PRICE_ID` | Stripe Price ID for a single photo |
-| `PUBLIC_BASE_URL` | Public URL, e.g. `https://photos.example.com` |
-| `ADMIN_TOKEN` | Bearer token for admin endpoints |
+| POSTGRES_PASSWORD | PostgreSQL password |
+| STRIPE_SECRET_KEY | Stripe secret key (`sk_test_...`) |
+| STRIPE_WEBHOOK_SECRET | Stripe webhook signing secret |
+| STRIPE_PRICE_ID | Stripe Price ID for one photo |
+| PUBLIC_BASE_URL | Public site URL (for links) |
+| ADMIN_TOKEN | Admin API token |
+| SITE_NAME | Frontend branding title |
+| SITE_TAGLINE | Frontend branding tagline |
 
-## End-to-end test (curl)
+## Local development
 
-See `context.md` for the full manual test script.
+1) Create env file:
 
-1. Place proof + original files under `/mnt/pstore/photos/`
-2. `POST /api/admin/events` — create event
-3. `POST /api/admin/events/{id}/ingest` — scan proofs directory
-4. `POST /api/carts` — select photos
-5. `POST /api/checkout` — get Stripe Checkout URL
-6. Complete payment in Stripe test mode
-7. Poll `GET /api/orders/{id}` until `READY`
-8. `GET /d/{token}` — download ZIP
+```bash
+cp .env.example .env
+```
+
+2) Start stack:
+
+```bash
+docker compose up -d --build
+```
+
+For local data mounts, use `docker-compose.override.yml` (already included in repo).
+
+## API highlights
+
+- Public:
+  - `GET /api/events`
+  - `GET /api/events/{id}/photos?page=1&bib=123&start_time=09:00&end_time=11:30`
+- Checkout:
+  - `POST /api/carts`
+  - `POST /api/checkout`
+- Orders:
+  - `GET /api/orders/{id}`
+  - `GET /d/{token}`
+- Admin:
+  - `POST /api/admin/events`
+  - `POST /api/admin/events/{id}/ingest`
+  - `POST /api/admin/events/{id}/tags/bibs`
+  - `GET /api/admin/orders`
+  - `POST /api/admin/orders/{id}/reset-delivery`
+
+## Operational notes
+
+- Download links are expiry-limited and count-limited.
+- ZIP outputs are generated with readable permissions for nginx delivery.
+- If Stripe webhooks are unreachable in dev, the order endpoint includes fallback status fulfillment behavior.
+
+## Testing
+
+Backend tests:
+
+```bash
+python -m pytest api/tests -q
+```
+
+Frontend build check:
+
+```bash
+npm --prefix frontend run build
+```
