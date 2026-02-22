@@ -470,3 +470,58 @@ def test_upload_photo_updates_existing(admin_client, db_session, test_event, tes
 def test_upload_photo_unknown_event(admin_client):
     resp = _upload(admin_client, 99999, "img_003", "proof")
     assert resp.status_code == 404
+
+
+def test_upload_photo_cross_event_collision(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    """Uploading a photo_id that already belongs to a different event must return 409."""
+    from photostore.config import settings
+    from photostore.models import Event, Photo, PhotoState
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    other_event = Event(slug="other-race", name="Other Race", date="2025-06-01T09:00:00Z")
+    db_session.add(other_event)
+    db_session.flush()
+
+    # Create a photo belonging to other_event
+    db_session.add(Photo(
+        id="shared_001",
+        event_id=other_event.id,
+        proof_path=f"proofs/other-race/shared_001.jpg",
+        original_path=f"originals/other-race/shared_001.jpg",
+        state=PhotoState.MISSING,
+    ))
+    db_session.flush()
+
+    # Attempt to upload under test_event using the same photo_id
+    resp = _upload(admin_client, test_event.id, "shared_001", "proof")
+    assert resp.status_code == 409
+    assert "different event" in resp.json()["detail"]
+
+
+# ── Bib tag replace flag ──────────────────────────────────────────────────────
+
+def test_upload_bib_tags_replace_clears_existing(admin_client, db_session, test_event, test_photos):
+    from photostore.models import PhotoTag
+
+    photo_id = test_photos[0].id
+
+    # Seed an existing bib tag
+    db_session.add(PhotoTag(photo_id=photo_id, tag_type="bib", value="old_bib", confidence=0.9))
+    db_session.flush()
+
+    # Upload with replace=True — should wipe old tags and add the new one
+    resp = admin_client.post(
+        f"/api/admin/events/{test_event.id}/tags/bibs",
+        json={
+            "tags": [{"photo_id": photo_id, "bib": "new_bib", "confidence": 0.95}],
+            "replace": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["added"] == 1
+
+    tags = db_session.query(PhotoTag).filter(PhotoTag.photo_id == photo_id, PhotoTag.tag_type == "bib").all()
+    assert len(tags) == 1
+    assert tags[0].value == "new_bib"

@@ -411,6 +411,11 @@ def upload_photo(
         raise
 
     existing = db.query(Photo).filter(Photo.id == photo_id).first()
+    if existing is not None and existing.event_id != event_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"photo_id '{photo_id}' already belongs to a different event.",
+        )
     created = existing is None
 
     if kind == "proof":

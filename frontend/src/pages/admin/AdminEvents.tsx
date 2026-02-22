@@ -359,9 +359,15 @@ export default function AdminEvents() {
       )}
       {/* Delete confirmation modal */}
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-modal-title"
+          onKeyDown={(e) => { if (e.key === 'Escape') closeDeleteModal() }}
+        >
           <div className="bg-surface-800 border border-surface-600 rounded-xl p-6 max-w-md w-full space-y-4">
-            <h2 className="font-semibold text-content">Delete event</h2>
+            <h2 id="delete-modal-title" className="font-semibold text-content">Delete event</h2>
             <p className="text-sm text-gray-300">
               Delete{' '}
               <span className="font-medium text-white">{deleteTarget.name}</span>? All photos and
@@ -394,11 +400,17 @@ export default function AdminEvents() {
               </div>
             )}
 
-            {deleteMut.error && !forceInfo && (
-              <p className="text-xs text-red-400">
-                {(deleteMut.error as Error).message}
-              </p>
-            )}
+            {deleteMut.error && (() => {
+              const is409 = (deleteMut.error as Error).message?.startsWith('409:')
+              // Suppress 409 errors when forceInfo is showing the confirmation UI;
+              // always show non-409 errors (e.g. network failures after a force attempt)
+              if (forceInfo && is409) return null
+              return (
+                <p className="text-xs text-red-400">
+                  {(deleteMut.error as Error).message}
+                </p>
+              )
+            })()}
 
             <div className="flex gap-3 pt-2">
               <Button
