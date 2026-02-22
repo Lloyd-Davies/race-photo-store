@@ -55,7 +55,7 @@ def list_photos(
             q = q.filter(captured_time <= end_time_obj)
 
     total = q.count()
-    photos = q.order_by(Photo.captured_at.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    photos = q.order_by(Photo.captured_at.asc().nullslast(), Photo.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
 
     return PhotoListOut(
         photos=[

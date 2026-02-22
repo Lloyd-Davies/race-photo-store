@@ -14,15 +14,13 @@ export function Skeleton({ className = '', ...props }: SkeletonProps) {
   )
 }
 
-/** A grid of skeleton photo cards matching the masonry gallery */
+/** A grid of skeleton photo cards matching the gallery */
 export function PhotoSkeleton() {
-  // Vary heights to mimic a real masonry layout during loading
-  const heights = [180, 240, 200, 160, 220, 200, 180, 240, 160, 200, 220, 200]
   return (
     <div className="masonry">
-      {heights.map((h, i) => (
+      {Array.from({ length: 12 }).map((_, i) => (
         <div key={i} className="masonry-item">
-          <Skeleton style={{ height: h }} />
+          <Skeleton className="absolute inset-0" />
         </div>
       ))}
     </div>
