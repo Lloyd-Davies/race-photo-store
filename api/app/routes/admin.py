@@ -387,6 +387,16 @@ def upload_photo(
     if not re.match(r'^[A-Za-z0-9_-]+$', photo_id):
         raise HTTPException(400, "photo_id must contain only alphanumeric characters, hyphens, or underscores")
 
+    # Cross-event collision check: reject before touching the filesystem so no
+    # orphaned file is written when the photo_id belongs to a different event.
+    existing = db.query(Photo).filter(Photo.id == photo_id).first()
+    if existing is not None and existing.event_id != event_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"photo_id '{photo_id}' already belongs to a different event.",
+        )
+    created = existing is None
+
     storage_root = Path(settings.STORAGE_ROOT)
     dest_dir = storage_root / f"{kind}s" / event.slug
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -409,14 +419,6 @@ def upload_photo(
     except Exception:
         Path(tmp.name).unlink(missing_ok=True)
         raise
-
-    existing = db.query(Photo).filter(Photo.id == photo_id).first()
-    if existing is not None and existing.event_id != event_id:
-        raise HTTPException(
-            status_code=409,
-            detail=f"photo_id '{photo_id}' already belongs to a different event.",
-        )
-    created = existing is None
 
     if kind == "proof":
         if existing is None:
