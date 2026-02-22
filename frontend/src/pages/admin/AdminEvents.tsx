@@ -84,15 +84,21 @@ export default function AdminEvents() {
       closeDeleteModal()
     },
     onError: (err: Error) => {
+      let ordersAffected: number | null = null
       const match = err.message.match(/^409: (.+)$/)
       if (match) {
         try {
           const body = JSON.parse(match[1])
-          const n = body?.detail?.orders_affected ?? body?.orders_affected ?? 0
-          setForceInfo({ ordersAffected: n })
+          const n = body?.detail?.orders_affected ?? body?.orders_affected
+          if (typeof n === 'number' && Number.isFinite(n)) {
+            ordersAffected = n
+          }
         } catch {
-          // non-JSON 409 — leave forceInfo null
+          // non-JSON 409 — leave ordersAffected null
         }
+      }
+      if (ordersAffected !== null) {
+        setForceInfo({ ordersAffected })
       }
     },
   })

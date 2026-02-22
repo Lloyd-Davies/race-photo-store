@@ -326,8 +326,6 @@ def test_delete_event_removes_photos_and_tags(admin_client, db_session, test_eve
 
 
 def test_delete_event_blocked_by_paid_orders(admin_client, db_session, test_event, test_photos):
-    from datetime import timedelta
-    import uuid
     from photostore.models import Order, OrderItem, OrderStatus
 
     order = Order(
@@ -342,7 +340,9 @@ def test_delete_event_blocked_by_paid_orders(admin_client, db_session, test_even
 
     resp = admin_client.delete(f"/api/admin/events/{test_event.id}")
     assert resp.status_code == 409
-    assert "1 paid order" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert detail["orders_affected"] == 1
+    assert "1 paid order" in detail["message"]
 
 
 def test_delete_event_force_overrides_paid_orders(admin_client, db_session, test_event, test_photos):
@@ -387,3 +387,86 @@ def test_delete_event_unknown(admin_client):
     resp = admin_client.delete("/api/admin/events/99999")
     assert resp.status_code == 404
 
+
+# ── upload_photo ─────────────────────────────────────────────────────────────
+
+def _upload(client, event_id: int, photo_id: str, kind: str, data: bytes = b"\xff\xd8\xff\xe0test"):
+    return client.post(
+        f"/api/admin/events/{event_id}/photos",
+        data={"photo_id": photo_id, "kind": kind},
+        files={"file": ("photo.jpg", data, "image/jpeg")},
+    )
+
+
+def test_upload_photo_invalid_kind(admin_client, test_event):
+    resp = _upload(admin_client, test_event.id, "photo_001", "thumbnail")
+    assert resp.status_code == 400
+    assert "kind" in resp.json()["detail"].lower()
+
+
+def test_upload_photo_invalid_photo_id(admin_client, test_event):
+    resp = _upload(admin_client, test_event.id, "../evil", "proof")
+    assert resp.status_code == 400
+    assert "photo_id" in resp.json()["detail"].lower()
+
+
+def test_upload_photo_proof_creates_record(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    resp = _upload(admin_client, test_event.id, "img_001", "proof")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["photo_id"] == "img_001"
+    assert data["kind"] == "proof"
+    assert data["created"] is True
+    assert data["size_bytes"] > 0
+
+    photo = db_session.query(Photo).filter(Photo.id == "img_001").first()
+    assert photo is not None
+    assert photo.proof_path == f"proofs/{test_event.slug}/img_001.jpg"
+    assert (storage / "proofs" / test_event.slug / "img_001.jpg").exists()
+
+
+def test_upload_photo_original_creates_record(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import Photo, PhotoState
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    resp = _upload(admin_client, test_event.id, "img_002", "original")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["created"] is True
+
+    photo = db_session.query(Photo).filter(Photo.id == "img_002").first()
+    assert photo is not None
+    assert photo.original_path == f"originals/{test_event.slug}/img_002.jpg"
+    assert photo.state == PhotoState.READY
+    assert (storage / "originals" / test_event.slug / "img_002.jpg").exists()
+
+
+def test_upload_photo_updates_existing(admin_client, db_session, test_event, test_photos, tmp_path, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    existing_id = test_photos[0].id
+    resp = _upload(admin_client, test_event.id, existing_id, "proof")
+    assert resp.status_code == 200
+    assert resp.json()["created"] is False
+
+    db_session.expire_all()
+    photo = db_session.query(Photo).filter(Photo.id == existing_id).first()
+    assert photo.proof_path == f"proofs/{test_event.slug}/{existing_id}.jpg"
+
+
+def test_upload_photo_unknown_event(admin_client):
+    resp = _upload(admin_client, 99999, "img_003", "proof")
+    assert resp.status_code == 404

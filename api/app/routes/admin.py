@@ -1,5 +1,7 @@
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import re
+import tempfile
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -93,8 +95,8 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
 
 @router.get("/events", response_model=list[EventCreatedOut], dependencies=[Depends(require_admin)])
 def list_admin_events(db: Session = Depends(get_db)) -> list[EventCreatedOut]:
-    """Return all events regardless of status (admin view)."""
-    events = db.query(Event).order_by(Event.date.desc()).all()
+    """Return all events regardless of status (admin view), newest first by ID."""
+    events = db.query(Event).order_by(Event.id.desc()).all()
     return [EventCreatedOut(id=e.id, slug=e.slug) for e in events]
 
 
@@ -190,39 +192,41 @@ def delete_event(
 
     slug = event.slug
 
-    # Collect photo IDs for this event
-    photo_ids = [row[0] for row in db.query(Photo.id).filter(Photo.event_id == event_id).all()]
+    # Subquery for all photo IDs in this event — keeps filtering in the DB,
+    # avoiding materialising a potentially huge list in Python memory.
+    photo_subq = db.query(Photo.id).filter(Photo.event_id == event_id).scalar_subquery()
 
-    # Count paid orders that reference these photos
-    orders_affected = 0
-    if photo_ids:
-        orders_affected = (
-            db.query(Order)
-            .join(OrderItem, OrderItem.order_id == Order.id)
-            .filter(
-                OrderItem.photo_id.in_(photo_ids),
-                Order.status == OrderStatus.PAID,
-            )
-            .distinct()
-            .count()
+    # Count paid orders that reference photos in this event
+    orders_affected = (
+        db.query(Order)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(
+            OrderItem.photo_id.in_(photo_subq),
+            Order.status == OrderStatus.PAID,
         )
+        .distinct()
+        .count()
+    )
 
     if orders_affected > 0 and not force:
         raise HTTPException(
-            409,
-            f"{orders_affected} paid order(s) reference photos in this event. "
-            "Set force=true to delete anyway.",
+            status_code=409,
+            detail={
+                "orders_affected": orders_affected,
+                "message": (
+                    f"{orders_affected} paid order(s) reference photos in this event. "
+                    "Set force=true to delete anyway."
+                ),
+            },
         )
 
-    # Delete in FK-safe order
-    tags_deleted = 0
-    if photo_ids:
-        tags_deleted = (
-            db.query(PhotoTag)
-            .filter(PhotoTag.photo_id.in_(photo_ids))
-            .delete(synchronize_session="fetch")
-        )
-        db.query(OrderItem).filter(OrderItem.photo_id.in_(photo_ids)).delete(synchronize_session="fetch")
+    # Delete in FK-safe order, using the same subquery to avoid a Python-side list
+    tags_deleted = (
+        db.query(PhotoTag)
+        .filter(PhotoTag.photo_id.in_(photo_subq))
+        .delete(synchronize_session="fetch")
+    )
+    db.query(OrderItem).filter(OrderItem.photo_id.in_(photo_subq)).delete(synchronize_session="fetch")
 
     db.query(Delivery).filter(Delivery.event_slug == slug).delete(synchronize_session="fetch")
     db.query(Cart).filter(Cart.event_id == event_id).delete(synchronize_session="fetch")
@@ -232,15 +236,20 @@ def delete_event(
     db.commit()
 
     # Optionally remove files from disk
+    # Catch filesystem errors so a stale/unwritable directory doesn't mask
+    # the fact that the DB deletion already succeeded.
     files_deleted = False
     if delete_files:
         import shutil
         storage_root = Path(settings.STORAGE_ROOT)
-        for kind in ("proofs", "originals"):
-            target = storage_root / kind / slug
-            if target.exists():
-                shutil.rmtree(target)
-        files_deleted = True
+        try:
+            for kind in ("proofs", "originals"):
+                target = storage_root / kind / slug
+                if target.exists():
+                    shutil.rmtree(target)
+            files_deleted = True
+        except OSError:
+            files_deleted = False
 
     return DeleteEventResult(
         slug=slug,
@@ -374,20 +383,32 @@ def upload_photo(
     if kind not in ("original", "proof"):
         raise HTTPException(400, "kind must be 'original' or 'proof'")
 
+    # Validate photo_id to prevent path traversal attacks
+    if not re.match(r'^[A-Za-z0-9_-]+$', photo_id):
+        raise HTTPException(400, "photo_id must contain only alphanumeric characters, hyphens, or underscores")
+
     storage_root = Path(settings.STORAGE_ROOT)
     dest_dir = storage_root / f"{kind}s" / event.slug
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"{photo_id}.jpg"
 
-    # Stream to disk in 256 KB chunks to avoid holding full file in RAM
+    # Stream to a temporary file first, then atomically rename into place.
+    # This prevents a partial JPEG being left at the canonical path if the
+    # client disconnects or the process crashes mid-upload.
     size_bytes = 0
-    with dest_path.open("wb") as out:
-        while True:
-            chunk = file.file.read(262144)
-            if not chunk:
-                break
-            out.write(chunk)
-            size_bytes += len(chunk)
+    tmp = tempfile.NamedTemporaryFile(dir=dest_dir, suffix=".tmp", delete=False)
+    try:
+        with tmp:
+            while True:
+                chunk = file.file.read(262144)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+                size_bytes += len(chunk)
+        Path(tmp.name).replace(dest_path)
+    except Exception:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
     existing = db.query(Photo).filter(Photo.id == photo_id).first()
     created = existing is None
