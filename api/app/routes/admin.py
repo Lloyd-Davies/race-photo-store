@@ -1,8 +1,10 @@
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import re
+import tempfile
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func
@@ -16,15 +18,63 @@ from app.schemas import (
     BibTagsRequest,
     BibTagsResult,
     CreateEventRequest,
+    DeleteEventResult,
+    PhotoIdsOut,
+    PhotoUploadResult,
     EventCreatedOut,
     IngestResult,
     UpdateEventRequest,
 )
 from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import Delivery, Event, EventStatus, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
+from photostore.models import Cart, Delivery, Event, EventStatus, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _parse_exif_offset(raw_offset: str | None) -> timezone | None:
+    if not raw_offset:
+        return None
+    try:
+        raw = raw_offset.strip()
+        if len(raw) != 6 or raw[0] not in {"+", "-"} or raw[3] != ":":
+            return None
+        sign = 1 if raw[0] == "+" else -1
+        hours = int(raw[1:3])
+        minutes = int(raw[4:6])
+        return timezone(sign * timedelta(hours=hours, minutes=minutes))
+    except Exception:
+        return None
+
+
+def _extract_captured_at(image_path: Path) -> datetime | None:
+    if not image_path.exists():
+        return None
+
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+
+        dt_raw = exif.get(0x9003) or exif.get(0x0132)
+        if not dt_raw:
+            return None
+
+        dt_text = str(dt_raw).split(".")[0]
+        captured = datetime.strptime(dt_text, "%Y:%m:%d %H:%M:%S")
+
+        offset_raw = exif.get(0x9011) or exif.get(0x9010)
+        tz = _parse_exif_offset(str(offset_raw) if offset_raw else None)
+        if tz is None:
+            return captured.replace(tzinfo=timezone.utc)
+
+        return captured.replace(tzinfo=tz).astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None) -> AdminOrderOut:
@@ -41,6 +91,13 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
         expires_at=delivery.expires_at if delivery else None,
         download_url=(f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}" if delivery else None),
     )
+
+
+@router.get("/events", response_model=list[EventCreatedOut], dependencies=[Depends(require_admin)])
+def list_admin_events(db: Session = Depends(get_db)) -> list[EventCreatedOut]:
+    """Return all events regardless of status (admin view), newest first by ID."""
+    events = db.query(Event).order_by(Event.id.desc()).all()
+    return [EventCreatedOut(id=e.id, slug=e.slug) for e in events]
 
 
 @router.post("/events", response_model=EventCreatedOut, dependencies=[Depends(require_admin)])
@@ -96,6 +153,113 @@ def get_admin_stats(db: Session = Depends(get_db)) -> AdminStatsOut:
     )
 
 
+@router.get(
+    "/events/{event_id}/photo_ids",
+    response_model=PhotoIdsOut,
+    dependencies=[Depends(require_admin)],
+)
+def get_photo_ids(event_id: int, db: Session = Depends(get_db)) -> PhotoIdsOut:
+    """Return all photo_id stems already stored for this event.
+
+    Used by the preprocessor deploy worker to skip photos already uploaded.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+    ids = [row[0] for row in db.query(Photo.id).filter(Photo.event_id == event_id).all()]
+    return PhotoIdsOut(photo_ids=ids)
+
+
+@router.delete(
+    "/events/{event_id}",
+    response_model=DeleteEventResult,
+    dependencies=[Depends(require_admin)],
+)
+def delete_event(
+    event_id: int,
+    delete_files: bool = Query(default=False),
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> DeleteEventResult:
+    """Delete an event and all associated DB rows.
+
+    Guards against events that have PAID orders unless force=True.
+    Set delete_files=True to also remove proofs/ and originals/ from disk.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    slug = event.slug
+
+    # Subquery for all photo IDs in this event — keeps filtering in the DB,
+    # avoiding materialising a potentially huge list in Python memory.
+    photo_subq = db.query(Photo.id).filter(Photo.event_id == event_id).scalar_subquery()
+
+    # Count paid orders that reference photos in this event
+    orders_affected = (
+        db.query(Order)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(
+            OrderItem.photo_id.in_(photo_subq),
+            Order.status == OrderStatus.PAID,
+        )
+        .distinct()
+        .count()
+    )
+
+    if orders_affected > 0 and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "orders_affected": orders_affected,
+                "message": (
+                    f"{orders_affected} paid order(s) reference photos in this event. "
+                    "Set force=true to delete anyway."
+                ),
+            },
+        )
+
+    # Delete in FK-safe order, using the same subquery to avoid a Python-side list
+    tags_deleted = (
+        db.query(PhotoTag)
+        .filter(PhotoTag.photo_id.in_(photo_subq))
+        .delete(synchronize_session="fetch")
+    )
+    db.query(OrderItem).filter(OrderItem.photo_id.in_(photo_subq)).delete(synchronize_session="fetch")
+
+    db.query(Delivery).filter(Delivery.event_slug == slug).delete(synchronize_session="fetch")
+    db.query(Cart).filter(Cart.event_id == event_id).delete(synchronize_session="fetch")
+
+    photos_deleted = db.query(Photo).filter(Photo.event_id == event_id).delete(synchronize_session="fetch")
+    db.delete(event)
+    db.commit()
+
+    # Optionally remove files from disk
+    # Catch filesystem errors so a stale/unwritable directory doesn't mask
+    # the fact that the DB deletion already succeeded.
+    files_deleted = False
+    if delete_files:
+        import shutil
+        storage_root = Path(settings.STORAGE_ROOT)
+        try:
+            for kind in ("proofs", "originals"):
+                target = storage_root / kind / slug
+                if target.exists():
+                    shutil.rmtree(target)
+            files_deleted = True
+        except OSError:
+            files_deleted = False
+
+    return DeleteEventResult(
+        slug=slug,
+        photos_deleted=photos_deleted,
+        tags_deleted=tags_deleted,
+        orders_affected=orders_affected,
+        files_deleted=files_deleted,
+    )
+
+
 @router.post(
     "/events/{event_id}/ingest",
     response_model=IngestResult,
@@ -128,11 +292,15 @@ def ingest_photos(event_id: int, db: Session = Depends(get_db)) -> IngestResult:
 
         original = storage_root / "originals" / event.slug / f"{photo_id}.jpg"
         state = PhotoState.READY if original.exists() else PhotoState.MISSING
+        captured_at = _extract_captured_at(original)
+        if captured_at is None:
+            captured_at = _extract_captured_at(filepath)
 
         db.add(
             Photo(
                 id=photo_id,
                 event_id=event_id,
+                captured_at=captured_at,
                 proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
                 original_path=f"originals/{event.slug}/{photo_id}.jpg",
                 state=state,
@@ -159,6 +327,14 @@ def upload_bib_tags(
         raise HTTPException(404, "Event not found")
 
     added = 0
+    if req.replace:
+        db.query(PhotoTag).filter(
+            PhotoTag.photo_id.in_(
+                db.query(Photo.id).filter(Photo.event_id == event_id)
+            ),
+            PhotoTag.tag_type == "bib",
+        ).delete(synchronize_session="fetch")
+
     for entry in req.tags:
         exists = (
             db.query(PhotoTag)
@@ -182,6 +358,103 @@ def upload_bib_tags(
 
     db.commit()
     return BibTagsResult(added=added)
+
+
+@router.post(
+    "/events/{event_id}/photos",
+    response_model=PhotoUploadResult,
+    dependencies=[Depends(require_admin)],
+)
+def upload_photo(
+    event_id: int,
+    photo_id: str = Form(...),
+    kind: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> PhotoUploadResult:
+    """Upload a single image (original or proof) for an event.
+
+    Saves to {STORAGE_ROOT}/{kind}s/{slug}/{photo_id}.jpg and creates or
+    updates the Photo DB record. kind must be 'original' or 'proof'.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+    if kind not in ("original", "proof"):
+        raise HTTPException(400, "kind must be 'original' or 'proof'")
+
+    # Validate photo_id to prevent path traversal attacks
+    if not re.match(r'^[A-Za-z0-9_-]+$', photo_id):
+        raise HTTPException(400, "photo_id must contain only alphanumeric characters, hyphens, or underscores")
+
+    # Cross-event collision check: reject before touching the filesystem so no
+    # orphaned file is written when the photo_id belongs to a different event.
+    existing = db.query(Photo).filter(Photo.id == photo_id).first()
+    if existing is not None and existing.event_id != event_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"photo_id '{photo_id}' already belongs to a different event.",
+        )
+    created = existing is None
+
+    storage_root = Path(settings.STORAGE_ROOT)
+    dest_dir = storage_root / f"{kind}s" / event.slug
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / f"{photo_id}.jpg"
+
+    # Stream to a temporary file first, then atomically rename into place.
+    # This prevents a partial JPEG being left at the canonical path if the
+    # client disconnects or the process crashes mid-upload.
+    size_bytes = 0
+    tmp = tempfile.NamedTemporaryFile(dir=dest_dir, suffix=".tmp", delete=False)
+    try:
+        with tmp:
+            while True:
+                chunk = file.file.read(262144)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+                size_bytes += len(chunk)
+        Path(tmp.name).replace(dest_path)
+    except Exception:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+    if kind == "proof":
+        if existing is None:
+            db.add(Photo(
+                id=photo_id,
+                event_id=event_id,
+                proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
+                original_path=f"originals/{event.slug}/{photo_id}.jpg",
+                state=PhotoState.MISSING,
+            ))
+        else:
+            existing.proof_path = f"proofs/{event.slug}/{photo_id}.jpg"
+    else:  # original
+        captured_at = _extract_captured_at(dest_path)
+        if existing is None:
+            db.add(Photo(
+                id=photo_id,
+                event_id=event_id,
+                captured_at=captured_at,
+                proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
+                original_path=f"originals/{event.slug}/{photo_id}.jpg",
+                state=PhotoState.READY,
+            ))
+        else:
+            existing.original_path = f"originals/{event.slug}/{photo_id}.jpg"
+            existing.state = PhotoState.READY
+            if captured_at:
+                existing.captured_at = captured_at
+
+    db.commit()
+    return PhotoUploadResult(
+        photo_id=photo_id,
+        kind=kind,
+        size_bytes=size_bytes,
+        created=created,
+    )
 
 
 @router.get("/orders", response_model=AdminOrderListOut, dependencies=[Depends(require_admin)])

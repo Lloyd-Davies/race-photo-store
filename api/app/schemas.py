@@ -125,10 +125,30 @@ class BibTagEntry(BaseModel):
 
 class BibTagsRequest(BaseModel):
     tags: list[BibTagEntry]
+    replace: bool = False  # When True, clears existing bib tags for the event before inserting
 
 
 class BibTagsResult(BaseModel):
     added: int
+
+
+class PhotoUploadResult(BaseModel):
+    photo_id: str
+    kind: str        # "original" | "proof"
+    size_bytes: int
+    created: bool    # True → new DB record, False → updated existing
+
+
+class PhotoIdsOut(BaseModel):
+    photo_ids: list[str]
+
+
+class DeleteEventResult(BaseModel):
+    slug: str
+    photos_deleted: int
+    tags_deleted: int
+    orders_affected: int
+    files_deleted: bool
 
 
 class AdminOrderOut(BaseModel):
