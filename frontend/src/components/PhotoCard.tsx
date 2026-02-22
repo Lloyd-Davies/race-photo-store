@@ -45,7 +45,7 @@ export default function PhotoCard({ photo, eventId, onFullscreen }: PhotoCardPro
     >
       {/* Loading shimmer — shown until image is decoded */}
       {!loaded && (
-        <div className="absolute inset-0 bg-surface-800 animate-pulse" />
+        <div className="w-full bg-surface-800 animate-pulse" style={{ paddingBottom: '66.67%' }} />
       )}
 
       {/* Actual image — only mounted when in viewport */}
@@ -55,8 +55,8 @@ export default function PhotoCard({ photo, eventId, onFullscreen }: PhotoCardPro
           alt={`Photo ${photo.photo_id}`}
           loading="lazy"
           decoding="async"
-          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
-            loaded ? 'opacity-100' : 'opacity-0'
+          className={`w-full h-auto block transition-opacity duration-300 ${
+            loaded ? 'opacity-100' : 'opacity-0 absolute top-0 left-0'
           }`}
           onLoad={() => setLoaded(true)}
         />

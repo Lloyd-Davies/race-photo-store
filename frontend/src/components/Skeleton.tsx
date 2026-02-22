@@ -20,7 +20,7 @@ export function PhotoSkeleton() {
     <div className="masonry">
       {Array.from({ length: 12 }).map((_, i) => (
         <div key={i} className="masonry-item">
-          <Skeleton className="absolute inset-0" />
+          <Skeleton style={{ paddingBottom: '66.67%' }} />
         </div>
       ))}
     </div>

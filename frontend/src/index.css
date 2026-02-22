@@ -67,8 +67,6 @@
   .masonry-item {
     display: block;
     width: 100%;
-    aspect-ratio: 3 / 2;
-    overflow: hidden;
     position: relative;
   }
 }
