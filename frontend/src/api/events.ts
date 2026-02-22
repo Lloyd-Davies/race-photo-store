@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost } from './client'
 
 export interface Event {
   id: number
@@ -38,6 +38,14 @@ export interface BibTagsResult {
   added: number
 }
 
+export interface DeleteEventResult {
+  slug: string
+  photos_deleted: number
+  tags_deleted: number
+  orders_affected: number
+  files_deleted: boolean
+}
+
 export const fetchEvents = () => apiGet<Event[]>('/events')
 
 export const fetchPhotos = (
@@ -74,3 +82,16 @@ export const ingestPhotos = (eventId: number) =>
 
 export const uploadBibTags = (eventId: number, tags: { photo_id: string; bib: string; confidence?: number }[]) =>
   apiPost<BibTagsResult>(`/admin/events/${eventId}/tags/bibs`, { tags })
+
+export const listAdminEvents = () => apiGet<EventCreatedOut[]>('/admin/events')
+
+export const deleteEvent = (
+  eventId: number,
+  opts: { deleteFiles?: boolean; force?: boolean } = {},
+) => {
+  const params = new URLSearchParams()
+  if (opts.deleteFiles) params.set('delete_files', 'true')
+  if (opts.force) params.set('force', 'true')
+  const qs = params.toString()
+  return apiDelete<DeleteEventResult>(`/admin/events/${eventId}${qs ? `?${qs}` : ''}`)
+}

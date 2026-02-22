@@ -255,3 +255,135 @@ def test_admin_rebuild_zip_enqueues_and_clears_delivery(
     assert not zip_abs.exists()
 
     mock_celery_send_task.assert_called_with("tasks.build_zip.build_zip", args=[order.id])
+
+
+# ── Admin events list (S2) ────────────────────────────────────────────────────
+
+def test_list_admin_events_returns_all_statuses(admin_client, db_session, test_event):
+    from photostore.models import Event, EventStatus
+
+    archived = Event(
+        slug="archived-5k",
+        name="Old Race",
+        date="2024-01-01T09:00:00Z",
+        status=EventStatus.ARCHIVED,
+    )
+    db_session.add(archived)
+    db_session.flush()
+
+    resp = admin_client.get("/api/admin/events")
+    assert resp.status_code == 200
+    slugs = [e["slug"] for e in resp.json()]
+    assert test_event.slug in slugs
+    assert "archived-5k" in slugs
+
+
+def test_list_admin_events_requires_admin(client):
+    resp = client.get("/api/admin/events")
+    assert resp.status_code == 401
+
+
+# ── Photo IDs endpoint (S3) ───────────────────────────────────────────────────
+
+def test_get_photo_ids(admin_client, test_event, test_photos):
+    resp = admin_client.get(f"/api/admin/events/{test_event.id}/photo_ids")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "photo_ids" in data
+    assert set(data["photo_ids"]) == {p.id for p in test_photos}
+
+
+def test_get_photo_ids_empty_event(admin_client, test_event):
+    resp = admin_client.get(f"/api/admin/events/{test_event.id}/photo_ids")
+    assert resp.status_code == 200
+    assert resp.json()["photo_ids"] == []
+
+
+def test_get_photo_ids_unknown_event(admin_client):
+    resp = admin_client.get("/api/admin/events/99999/photo_ids")
+    assert resp.status_code == 404
+
+
+# ── Delete event endpoint (S4) ────────────────────────────────────────────────
+
+def test_delete_event_removes_photos_and_tags(admin_client, db_session, test_event, test_photos):
+    from photostore.models import Event, Photo, PhotoTag
+
+    # Add a bib tag
+    db_session.add(PhotoTag(photo_id=test_photos[0].id, tag_type="bib", value="42", confidence=0.9))
+    db_session.flush()
+
+    resp = admin_client.delete(f"/api/admin/events/{test_event.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["photos_deleted"] == 3
+    assert data["tags_deleted"] == 1
+    assert data["orders_affected"] == 0
+    assert data["files_deleted"] is False
+
+    assert db_session.query(Event).filter(Event.id == test_event.id).first() is None
+    assert db_session.query(Photo).filter(Photo.event_id == test_event.id).count() == 0
+
+
+def test_delete_event_blocked_by_paid_orders(admin_client, db_session, test_event, test_photos):
+    from datetime import timedelta
+    import uuid
+    from photostore.models import Order, OrderItem, OrderStatus
+
+    order = Order(
+        stripe_session_id="cs_block_delete",
+        email="a@b.com",
+        status=OrderStatus.PAID,
+    )
+    db_session.add(order)
+    db_session.flush()
+    db_session.add(OrderItem(order_id=order.id, photo_id=test_photos[0].id, unit_price_pence=500))
+    db_session.flush()
+
+    resp = admin_client.delete(f"/api/admin/events/{test_event.id}")
+    assert resp.status_code == 409
+    assert "1 paid order" in resp.json()["detail"]
+
+
+def test_delete_event_force_overrides_paid_orders(admin_client, db_session, test_event, test_photos):
+    from photostore.models import Event, Order, OrderItem, OrderStatus
+
+    order = Order(
+        stripe_session_id="cs_force_delete",
+        email="a@b.com",
+        status=OrderStatus.PAID,
+    )
+    db_session.add(order)
+    db_session.flush()
+    db_session.add(OrderItem(order_id=order.id, photo_id=test_photos[0].id, unit_price_pence=500))
+    db_session.flush()
+
+    resp = admin_client.delete(f"/api/admin/events/{test_event.id}?force=true")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["orders_affected"] == 1
+    assert db_session.query(Event).filter(Event.id == test_event.id).first() is None
+
+
+def test_delete_event_with_files(admin_client, db_session, test_event, test_photos, tmp_path, monkeypatch):
+    from photostore.config import settings
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    for kind in ("proofs", "originals"):
+        d = storage / kind / test_event.slug
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "test.jpg").write_bytes(b"x")
+
+    resp = admin_client.delete(f"/api/admin/events/{test_event.id}?delete_files=true")
+    assert resp.status_code == 200
+    assert resp.json()["files_deleted"] is True
+    assert not (storage / "proofs" / test_event.slug).exists()
+    assert not (storage / "originals" / test_event.slug).exists()
+
+
+def test_delete_event_unknown(admin_client):
+    resp = admin_client.delete("/api/admin/events/99999")
+    assert resp.status_code == 404
+

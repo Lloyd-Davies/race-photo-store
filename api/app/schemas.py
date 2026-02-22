@@ -139,6 +139,18 @@ class PhotoUploadResult(BaseModel):
     created: bool    # True → new DB record, False → updated existing
 
 
+class PhotoIdsOut(BaseModel):
+    photo_ids: list[str]
+
+
+class DeleteEventResult(BaseModel):
+    slug: str
+    photos_deleted: int
+    tags_deleted: int
+    orders_affected: int
+    files_deleted: bool
+
+
 class AdminOrderOut(BaseModel):
     id: int
     status: OrderStatus

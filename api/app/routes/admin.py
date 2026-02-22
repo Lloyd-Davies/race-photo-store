@@ -16,6 +16,8 @@ from app.schemas import (
     BibTagsRequest,
     BibTagsResult,
     CreateEventRequest,
+    DeleteEventResult,
+    PhotoIdsOut,
     PhotoUploadResult,
     EventCreatedOut,
     IngestResult,
@@ -23,7 +25,7 @@ from app.schemas import (
 )
 from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import Delivery, Event, EventStatus, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
+from photostore.models import Cart, Delivery, Event, EventStatus, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -89,6 +91,13 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
     )
 
 
+@router.get("/events", response_model=list[EventCreatedOut], dependencies=[Depends(require_admin)])
+def list_admin_events(db: Session = Depends(get_db)) -> list[EventCreatedOut]:
+    """Return all events regardless of status (admin view)."""
+    events = db.query(Event).order_by(Event.date.desc()).all()
+    return [EventCreatedOut(id=e.id, slug=e.slug) for e in events]
+
+
 @router.post("/events", response_model=EventCreatedOut, dependencies=[Depends(require_admin)])
 def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> EventCreatedOut:
     if db.query(Event).filter(Event.slug == req.slug).first():
@@ -139,6 +148,106 @@ def get_admin_stats(db: Session = Depends(get_db)) -> AdminStatsOut:
         pending_orders=db.query(Order).filter(Order.status == OrderStatus.PENDING).count(),
         failed_orders=db.query(Order).filter(Order.status == OrderStatus.FAILED).count(),
         active_events=db.query(Event).filter(Event.status == EventStatus.ACTIVE).count(),
+    )
+
+
+@router.get(
+    "/events/{event_id}/photo_ids",
+    response_model=PhotoIdsOut,
+    dependencies=[Depends(require_admin)],
+)
+def get_photo_ids(event_id: int, db: Session = Depends(get_db)) -> PhotoIdsOut:
+    """Return all photo_id stems already stored for this event.
+
+    Used by the preprocessor deploy worker to skip photos already uploaded.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+    ids = [row[0] for row in db.query(Photo.id).filter(Photo.event_id == event_id).all()]
+    return PhotoIdsOut(photo_ids=ids)
+
+
+@router.delete(
+    "/events/{event_id}",
+    response_model=DeleteEventResult,
+    dependencies=[Depends(require_admin)],
+)
+def delete_event(
+    event_id: int,
+    delete_files: bool = Query(default=False),
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> DeleteEventResult:
+    """Delete an event and all associated DB rows.
+
+    Guards against events that have PAID orders unless force=True.
+    Set delete_files=True to also remove proofs/ and originals/ from disk.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    slug = event.slug
+
+    # Collect photo IDs for this event
+    photo_ids = [row[0] for row in db.query(Photo.id).filter(Photo.event_id == event_id).all()]
+
+    # Count paid orders that reference these photos
+    orders_affected = 0
+    if photo_ids:
+        orders_affected = (
+            db.query(Order)
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .filter(
+                OrderItem.photo_id.in_(photo_ids),
+                Order.status == OrderStatus.PAID,
+            )
+            .distinct()
+            .count()
+        )
+
+    if orders_affected > 0 and not force:
+        raise HTTPException(
+            409,
+            f"{orders_affected} paid order(s) reference photos in this event. "
+            "Set force=true to delete anyway.",
+        )
+
+    # Delete in FK-safe order
+    tags_deleted = 0
+    if photo_ids:
+        tags_deleted = (
+            db.query(PhotoTag)
+            .filter(PhotoTag.photo_id.in_(photo_ids))
+            .delete(synchronize_session="fetch")
+        )
+        db.query(OrderItem).filter(OrderItem.photo_id.in_(photo_ids)).delete(synchronize_session="fetch")
+
+    db.query(Delivery).filter(Delivery.event_slug == slug).delete(synchronize_session="fetch")
+    db.query(Cart).filter(Cart.event_id == event_id).delete(synchronize_session="fetch")
+
+    photos_deleted = db.query(Photo).filter(Photo.event_id == event_id).delete(synchronize_session="fetch")
+    db.delete(event)
+    db.commit()
+
+    # Optionally remove files from disk
+    files_deleted = False
+    if delete_files:
+        import shutil
+        storage_root = Path(settings.STORAGE_ROOT)
+        for kind in ("proofs", "originals"):
+            target = storage_root / kind / slug
+            if target.exists():
+                shutil.rmtree(target)
+        files_deleted = True
+
+    return DeleteEventResult(
+        slug=slug,
+        photos_deleted=photos_deleted,
+        tags_deleted=tags_deleted,
+        orders_affected=orders_affected,
+        files_deleted=files_deleted,
     )
 
 
@@ -270,8 +379,15 @@ def upload_photo(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"{photo_id}.jpg"
 
-    data = file.file.read()
-    dest_path.write_bytes(data)
+    # Stream to disk in 256 KB chunks to avoid holding full file in RAM
+    size_bytes = 0
+    with dest_path.open("wb") as out:
+        while True:
+            chunk = file.file.read(262144)
+            if not chunk:
+                break
+            out.write(chunk)
+            size_bytes += len(chunk)
 
     existing = db.query(Photo).filter(Photo.id == photo_id).first()
     created = existing is None
@@ -308,7 +424,7 @@ def upload_photo(
     return PhotoUploadResult(
         photo_id=photo_id,
         kind=kind,
-        size_bytes=len(data),
+        size_bytes=size_bytes,
         created=created,
     )
 

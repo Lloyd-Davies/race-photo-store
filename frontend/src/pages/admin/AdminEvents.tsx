@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, UploadCloud, CalendarDays, MapPin, Pencil } from 'lucide-react'
-import { fetchEvents, createEvent, updateEvent, type Event } from '../../api/events'
+import { Plus, UploadCloud, CalendarDays, MapPin, Pencil, Trash2 } from 'lucide-react'
+import { fetchEvents, createEvent, updateEvent, deleteEvent, type Event } from '../../api/events'
 import Button from '../../components/Button'
 import { Skeleton } from '../../components/Skeleton'
 
@@ -36,6 +36,10 @@ export default function AdminEvents() {
   const [showForm, setShowForm] = useState(false)
   const [editingEventId, setEditingEventId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState<EditForm | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Event | null>(null)
+  const [deleteFiles, setDeleteFiles] = useState(false)
+  const [forceInfo, setForceInfo] = useState<{ ordersAffected: number } | null>(null)
+  const [forceConfirmed, setForceConfirmed] = useState(false)
 
   const { data: events, isLoading } = useQuery({
     queryKey: ['events'],
@@ -71,6 +75,48 @@ export default function AdminEvents() {
       setEditForm(null)
     },
   })
+
+  const deleteMut = useMutation({
+    mutationFn: ({ eventId, opts }: { eventId: number; opts: { deleteFiles: boolean; force: boolean } }) =>
+      deleteEvent(eventId, opts),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events'] })
+      closeDeleteModal()
+    },
+    onError: (err: Error) => {
+      const match = err.message.match(/^409: (.+)$/)
+      if (match) {
+        try {
+          const body = JSON.parse(match[1])
+          const n = body?.detail?.orders_affected ?? body?.orders_affected ?? 0
+          setForceInfo({ ordersAffected: n })
+        } catch {
+          // non-JSON 409 — leave forceInfo null
+        }
+      }
+    },
+  })
+
+  function openDeleteModal(event: Event) {
+    setDeleteTarget(event)
+    setDeleteFiles(false)
+    setForceInfo(null)
+    setForceConfirmed(false)
+    deleteMut.reset()
+  }
+
+  function closeDeleteModal() {
+    setDeleteTarget(null)
+    setDeleteFiles(false)
+    setForceInfo(null)
+    setForceConfirmed(false)
+    deleteMut.reset()
+  }
+
+  function handleDelete() {
+    if (!deleteTarget) return
+    deleteMut.mutate({ eventId: deleteTarget.id, opts: { deleteFiles, force: forceConfirmed } })
+  }
 
   function handleField(field: keyof CreateForm, value: string) {
     setForm((prev) => {
@@ -291,9 +337,83 @@ export default function AdminEvents() {
                     Ingest
                   </Button>
                 </Link>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-400 hover:text-red-300"
+                  onClick={() => openDeleteModal(event)}
+                  aria-label="Delete event"
+                >
+                  <Trash2 size={14} />
+                </Button>
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-800 border border-surface-600 rounded-xl p-6 max-w-md w-full space-y-4">
+            <h2 className="font-semibold text-content">Delete event</h2>
+            <p className="text-sm text-gray-300">
+              Delete{' '}
+              <span className="font-medium text-white">{deleteTarget.name}</span>? All photos and
+              tag data will be permanently removed.
+            </p>
+
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={deleteFiles}
+                onChange={(e) => setDeleteFiles(e.target.checked)}
+              />
+              Delete files from disk
+            </label>
+
+            {forceInfo && (
+              <div className="bg-red-950/50 border border-red-700/40 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-red-300">
+                  ⚠ {forceInfo.ordersAffected} paid order
+                  {forceInfo.ordersAffected !== 1 ? 's' : ''} reference this event.
+                </p>
+                <label className="flex items-center gap-2 text-xs text-red-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={forceConfirmed}
+                    onChange={(e) => setForceConfirmed(e.target.checked)}
+                  />
+                  I understand — force delete anyway
+                </label>
+              </div>
+            )}
+
+            {deleteMut.error && !forceInfo && (
+              <p className="text-xs text-red-400">
+                {(deleteMut.error as Error).message}
+              </p>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleDelete}
+                loading={deleteMut.isPending}
+                disabled={!!forceInfo && !forceConfirmed}
+              >
+                Delete
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={closeDeleteModal}
+                disabled={deleteMut.isPending}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
