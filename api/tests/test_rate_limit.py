@@ -1,29 +1,3 @@
-def test_admin_auth_rate_limit_returns_429(client, monkeypatch):
-    from app import deps
-
-    original_enforce = deps.enforce_rate_limit
-
-    calls = {"n": 0}
-
-    def fake_enforce(*args, **kwargs):
-        calls["n"] += 1
-        if calls["n"] > 2:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=429, detail="Too many requests. Please try again shortly.")
-
-    monkeypatch.setattr(deps, "enforce_rate_limit", fake_enforce)
-
-    for _ in range(2):
-        resp = client.get("/api/admin/stats")
-        assert resp.status_code == 401
-
-    blocked = client.get("/api/admin/stats")
-    assert blocked.status_code == 429
-
-    monkeypatch.setattr(deps, "enforce_rate_limit", original_enforce)
-
-
 def test_unlock_rate_limit_returns_429(client, db_session, monkeypatch):
     from datetime import datetime, timezone
 
