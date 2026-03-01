@@ -312,8 +312,9 @@ export default function AdminEvents() {
           {events.map((event: Event) => (
             <div
               key={event.id}
-              className="bg-surface-900 border border-surface-700 rounded-xl p-4 flex items-center gap-4"
+              className="bg-surface-900 border border-surface-700 rounded-xl p-4"
             >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <div className="flex-1 min-w-0">
                 {editingEventId === event.id && editForm ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -399,7 +400,7 @@ export default function AdminEvents() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0 flex-wrap sm:flex-nowrap justify-end">
                 <span
                   className={`text-xs rounded px-2 py-0.5 ${
                     event.status === 'ACTIVE'
@@ -454,6 +455,7 @@ export default function AdminEvents() {
                 >
                   <Trash2 size={14} />
                 </Button>
+              </div>
               </div>
             </div>
           ))}

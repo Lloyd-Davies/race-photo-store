@@ -178,8 +178,8 @@ export default function AdminLayout() {
 
   return (
     <div className="flex min-h-[calc(100vh-64px)]">
-      {/* Sidebar */}
-      <aside className="w-48 shrink-0 bg-surface-900 border-r border-surface-700 p-4 space-y-1">
+      {/* Sidebar — desktop only */}
+      <aside className="hidden md:flex md:flex-col w-48 shrink-0 bg-surface-900 border-r border-surface-700 p-4 space-y-1">
         <NavLink
           to="/admin/events"
           end
@@ -221,7 +221,7 @@ export default function AdminLayout() {
       </aside>
 
       {/* Content */}
-      <main className="flex-1 p-8 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto px-4 pt-4 pb-24 md:px-8 md:pt-8 md:pb-8">
         <div className="mb-6 bg-surface-900 border border-surface-700 rounded-xl p-4">
           <p className="text-xs uppercase tracking-wide text-content-muted mb-3">Admin snapshot</p>
           {statsLoading && (
@@ -259,6 +259,40 @@ export default function AdminLayout() {
         </div>
         <Outlet />
       </main>
+
+      {/* Mobile bottom nav — visible below md */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden bg-surface-900 border-t border-surface-700">
+        <NavLink
+          to="/admin/events"
+          end
+          className={({ isActive }) =>
+            `flex flex-1 flex-col items-center justify-center gap-0.5 py-3 text-[11px] font-medium transition-colors ${
+              isActive ? 'text-sky-400' : 'text-content-muted'
+            }`
+          }
+        >
+          <CalendarDays size={20} />
+          Events
+        </NavLink>
+        <NavLink
+          to="/admin/orders"
+          className={({ isActive }) =>
+            `flex flex-1 flex-col items-center justify-center gap-0.5 py-3 text-[11px] font-medium transition-colors ${
+              isActive ? 'text-sky-400' : 'text-content-muted'
+            }`
+          }
+        >
+          <ReceiptText size={20} />
+          Orders
+        </NavLink>
+        <button
+          onClick={handleLogout}
+          className="flex flex-1 flex-col items-center justify-center gap-0.5 py-3 text-[11px] font-medium text-content-muted hover:text-red-400 transition-colors"
+        >
+          <LogOut size={20} />
+          Sign out
+        </button>
+      </nav>
     </div>
   )
 }
