@@ -5,6 +5,104 @@ import { ArrowLeft, Play, Upload, CheckCircle2, XCircle } from 'lucide-react'
 import { fetchEvents, ingestPhotos, uploadBibTags, type IngestResult, type BibTagsResult } from '../../api/events'
 import Button from '../../components/Button'
 
+type BibTagUploadRow = { photo_id: string; bib: string; confidence?: number }
+
+function parseBibCsv(text: string): BibTagUploadRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) {
+    throw new Error('CSV file is empty')
+  }
+
+  const parseLine = (line: string) => line.split(',').map((part) => part.trim().replace(/^"|"$/g, ''))
+  const header = parseLine(lines[0]).map((column) => column.toLowerCase())
+
+  const photoIdIdx = header.indexOf('photo_id')
+  const bibIdx = header.indexOf('bib')
+  const confidenceIdx = header.indexOf('confidence')
+
+  if (photoIdIdx === -1 || bibIdx === -1) {
+    throw new Error("CSV must include headers 'photo_id' and 'bib'")
+  }
+
+  const rows: BibTagUploadRow[] = []
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseLine(lines[i])
+    const photoId = (cols[photoIdIdx] ?? '').trim()
+    const bib = (cols[bibIdx] ?? '').trim()
+
+    if (!photoId || !bib) {
+      continue
+    }
+
+    let confidence: number | undefined
+    if (confidenceIdx >= 0) {
+      const raw = (cols[confidenceIdx] ?? '').trim()
+      if (raw) {
+        const parsed = Number(raw)
+        if (Number.isNaN(parsed)) {
+          throw new Error(`Invalid confidence value on CSV row ${i + 1}`)
+        }
+        confidence = parsed
+      }
+    }
+
+    rows.push({ photo_id: photoId, bib, confidence })
+  }
+
+  if (rows.length === 0) {
+    throw new Error('CSV contains no valid photo_id/bib rows')
+  }
+
+  return rows
+}
+
+function parseBibJson(text: string): BibTagUploadRow[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error('File is not valid JSON')
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('Expected a JSON array')
+  }
+
+  const rows: BibTagUploadRow[] = []
+  for (const row of parsed) {
+    if (!row || typeof row !== 'object') {
+      continue
+    }
+    const rec = row as Record<string, unknown>
+    const photoId = typeof rec.photo_id === 'string' ? rec.photo_id.trim() : ''
+    const bib = typeof rec.bib === 'string' ? rec.bib.trim() : ''
+    if (!photoId || !bib) {
+      continue
+    }
+    const confidence = typeof rec.confidence === 'number' ? rec.confidence : undefined
+    rows.push({ photo_id: photoId, bib, confidence })
+  }
+
+  if (rows.length === 0) {
+    throw new Error('JSON contains no valid photo_id/bib rows')
+  }
+
+  return rows
+}
+
+async function parseBibUploadFile(file: File): Promise<BibTagUploadRow[]> {
+  const text = await file.text()
+  const isCsv = file.name.toLowerCase().endsWith('.csv')
+  if (isCsv) {
+    return parseBibCsv(text)
+  }
+  return parseBibJson(text)
+}
+
 export default function AdminIngest() {
   const { eventId } = useParams<{ eventId: string }>()
   const id = Number(eventId)
@@ -27,17 +125,8 @@ export default function AdminIngest() {
       const file = bibFileRef.current?.files?.[0]
       if (!file) throw new Error('No file selected')
 
-      // Parse JSON client-side to validate before upload
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(await file.text())
-      } catch {
-        throw new Error('File is not valid JSON')
-      }
-
-      if (!Array.isArray(parsed)) throw new Error('Expected a JSON array')
-
-      return uploadBibTags(id, parsed as { photo_id: string; bib: string }[])
+      const parsed = await parseBibUploadFile(file)
+      return uploadBibTags(id, parsed)
     },
     onSuccess: (data) => setBibResult(data),
     onError: (e: Error) => setBibError(e.message),
@@ -92,8 +181,8 @@ export default function AdminIngest() {
       <section className="bg-surface-900 border border-surface-700 rounded-xl p-6">
         <h2 className="font-semibold text-gray-100 mb-1">Upload bib tags</h2>
         <p className="text-xs text-gray-400 mb-4">
-          Upload a JSON array of <code className="text-sky-400">{"[{photo_id, bib}, ...]"}</code>{' '}
-          mappings to enable bib-number search.
+          Upload a generated CSV (<code className="text-sky-400">photo_id,bib,confidence</code>) or
+          JSON array (<code className="text-sky-400">{"[{photo_id, bib}, ...]"}</code>) to enable bib-number search.
         </p>
 
         <div className="flex items-center gap-3 mb-4">
@@ -102,7 +191,7 @@ export default function AdminIngest() {
             <input
               ref={bibFileRef}
               type="file"
-              accept=".json,application/json"
+              accept=".csv,text/csv,.json,application/json"
               className="text-sm text-gray-300 file:mr-3 file:rounded file:border-0 file:bg-surface-700 file:text-gray-200 file:px-3 file:py-1 file:text-xs file:cursor-pointer hover:file:bg-surface-600"
             />
           </label>
