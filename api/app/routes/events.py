@@ -1,14 +1,17 @@
 import math
 from datetime import datetime, time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import cast, Time
 
 from app.deps import get_db
 from app.event_access import create_event_access_token, verify_event_access_token, verify_event_password
 from app.schemas import EventOut, EventUnlockOut, EventUnlockRequest, PhotoListOut, PhotoOut
+from photostore.config import settings
 from photostore.models import Event, Photo, PhotoTag
 
 router = APIRouter(prefix="/api", tags=["events"])
@@ -70,7 +73,11 @@ def list_photos(
         photos=[
             PhotoOut(
                 photo_id=p.id,
-                proof_url=f"/{p.proof_path}",
+                proof_url=(
+                    f"/api/events/{event_id}/photos/{p.id}/proof?access_token={x_event_access}"
+                    if event.is_password_protected and x_event_access
+                    else f"/api/events/{event_id}/photos/{p.id}/proof"
+                ),
                 captured_at=p.captured_at,
             )
             for p in photos
@@ -99,3 +106,41 @@ def unlock_event(
 
     token, expires_at = create_event_access_token(event.id)
     return EventUnlockOut(access_token=token, expires_at=expires_at)
+
+
+@router.get("/events/{event_id}/photos/{photo_id}/proof")
+def get_event_proof(
+    event_id: int,
+    photo_id: str,
+    x_event_access: Optional[str] = Header(None),
+    access_token: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> Response:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    photo = (
+        db.query(Photo)
+        .filter(Photo.id == photo_id, Photo.event_id == event_id)
+        .first()
+    )
+    if not photo:
+        raise HTTPException(404, "Photo not found")
+
+    provided_access = x_event_access or access_token
+    if event.is_password_protected and not verify_event_access_token(provided_access, event_id):
+        raise HTTPException(401, "Event is locked. Unlock required.")
+
+    proof_abs = Path(settings.STORAGE_ROOT) / photo.proof_path
+    if not proof_abs.exists():
+        raise HTTPException(404, "Proof image not found")
+
+    return Response(
+        status_code=200,
+        headers={
+            "X-Accel-Redirect": f"/_internal_proofs/{event.slug}/{photo.id}.jpg",
+            "Content-Type": "image/jpeg",
+            "Cache-Control": "public, max-age=604800, immutable",
+        },
+    )

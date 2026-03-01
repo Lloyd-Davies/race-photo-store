@@ -19,9 +19,10 @@ def test_list_photos(client, test_event, test_photos):
     data = resp.json()
     assert data["total"] == 3
     assert len(data["photos"]) == 3
-    # proof_url must start with /proofs/
+    # proof_url must use guarded API proof endpoint
     for photo in data["photos"]:
-        assert photo["proof_url"].startswith("/proofs/")
+        assert photo["proof_url"].startswith(f"/api/events/{test_event.id}/photos/")
+        assert photo["proof_url"].endswith("/proof")
         assert "photo_id" in photo
 
 
@@ -144,3 +145,65 @@ def test_unlock_event_and_list_photos(client, db_session):
     )
     assert resp.status_code == 200
     assert resp.json()["total"] == 1
+    proof_url = resp.json()["photos"][0]["proof_url"]
+    assert f"access_token={token}" in proof_url
+
+
+def test_get_event_proof_unlocked_event(client, test_event, test_photos):
+    photo_id = test_photos[0].id
+    resp = client.get(f"/api/events/{test_event.id}/photos/{photo_id}/proof")
+    assert resp.status_code == 200
+    assert "X-Accel-Redirect" in resp.headers
+    assert resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/{photo_id}.jpg")
+
+
+def test_get_event_proof_locked_requires_token(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.event_access import hash_event_password
+    from photostore.config import settings
+    from photostore.models import Event, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="locked-proof",
+        name="Locked Proof",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        is_password_protected=True,
+        access_password_hash=hash_event_password("secret123"),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="locked-proof-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/locked-proof-001.jpg",
+        original_path=f"originals/{event.slug}/locked-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    proof = storage / "proofs" / event.slug / "locked-proof-001.jpg"
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    proof.write_bytes(b"FAKEJPEG")
+
+    locked = client.get(f"/api/events/{event.id}/photos/locked-proof-001/proof")
+    assert locked.status_code == 401
+
+    unlock = client.post(f"/api/events/{event.id}/unlock", json={"password": "secret123"})
+    assert unlock.status_code == 200
+    token = unlock.json()["access_token"]
+
+    unlocked = client.get(
+        f"/api/events/{event.id}/photos/locked-proof-001/proof",
+        headers={"X-Event-Access": token},
+    )
+    assert unlocked.status_code == 200
+    assert "X-Accel-Redirect" in unlocked.headers
+
+    unlocked_query = client.get(
+        f"/api/events/{event.id}/photos/locked-proof-001/proof?access_token={token}",
+    )
+    assert unlocked_query.status_code == 200
