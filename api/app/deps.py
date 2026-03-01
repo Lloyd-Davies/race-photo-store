@@ -1,3 +1,4 @@
+import hmac
 from typing import Generator, Optional
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -18,5 +19,8 @@ def get_db() -> Generator[Session, None, None]:
 
 def require_admin(request: Request, x_admin_token: Optional[str] = Header(None)) -> None:
     enforce_rate_limit(request, scope="admin-auth", limit=30, window_seconds=60)
-    if not settings.ADMIN_TOKEN or x_admin_token != settings.ADMIN_TOKEN:
+    if not settings.ADMIN_TOKEN or not x_admin_token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+    if not hmac.compare_digest(x_admin_token, settings.ADMIN_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid admin token")

@@ -81,6 +81,22 @@ def test_webhook_invalid_signature(client, monkeypatch):
     assert resp.status_code == 400
 
 
+def test_webhook_invalid_payload_is_generic(client, monkeypatch):
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake")
+
+    with patch("stripe.Webhook.construct_event", side_effect=Exception("boom details")):
+        resp = client.post(
+            "/api/stripe/webhook",
+            content=b"{}",
+            headers={"stripe-signature": "bad"},
+        )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Webhook payload invalid"
+
+
 def test_webhook_idempotent(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
     """Delivering the webhook twice must not re-enqueue build_zip."""
     from photostore.config import settings
