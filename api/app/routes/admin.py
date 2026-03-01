@@ -412,6 +412,31 @@ def upload_bib_tags(
         raise HTTPException(404, "Event not found")
 
     added = 0
+    requested_photo_ids = {entry.photo_id for entry in req.tags if entry.photo_id}
+    if requested_photo_ids:
+        valid_photo_ids = {
+            row[0]
+            for row in (
+                db.query(Photo.id)
+                .filter(
+                    Photo.event_id == event_id,
+                    Photo.id.in_(requested_photo_ids),
+                )
+                .all()
+            )
+        }
+        missing_photo_ids = sorted(requested_photo_ids - valid_photo_ids)
+        if missing_photo_ids:
+            preview = ", ".join(missing_photo_ids[:5])
+            suffix = "" if len(missing_photo_ids) <= 5 else ", ..."
+            raise HTTPException(
+                400,
+                (
+                    "Bib tag upload contains photo_id values not found in this event: "
+                    f"{preview}{suffix}"
+                ),
+            )
+
     if req.replace:
         db.query(PhotoTag).filter(
             PhotoTag.photo_id.in_(

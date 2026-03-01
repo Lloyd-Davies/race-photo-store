@@ -252,6 +252,19 @@ def test_upload_bib_tags_idempotent(admin_client, test_event, test_photos):
     assert resp.json()["added"] == 0  # duplicate, not re-added
 
 
+def test_upload_bib_tags_rejects_unknown_photo_ids(admin_client, test_event):
+    resp = admin_client.post(
+        f"/api/admin/events/{test_event.id}/tags/bibs",
+        json={
+            "tags": [
+                {"photo_id": "missing-photo-001", "bib": "457", "confidence": 0.95},
+            ],
+        },
+    )
+    assert resp.status_code == 400
+    assert "not found in this event" in str(resp.json().get("detail", "")).lower()
+
+
 def test_upload_bib_tags_trims_and_deduplicates_equivalent_values(admin_client, db_session, test_event, test_photos):
     from photostore.models import PhotoTag
 
