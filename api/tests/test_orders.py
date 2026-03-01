@@ -1,6 +1,13 @@
 from photostore.models import Order, OrderStatus
 
 
+def _order_access(order_id: int) -> str:
+    from app.order_access import create_order_access_token
+
+    token, _ = create_order_access_token(order_id)
+    return token
+
+
 def _create_order(db_session, status=OrderStatus.PENDING):
     order = Order(
         stripe_session_id=f"cs_test_{status.value}",
@@ -14,7 +21,7 @@ def _create_order(db_session, status=OrderStatus.PENDING):
 
 def test_get_order_pending(client, db_session):
     order = _create_order(db_session, OrderStatus.PENDING)
-    resp = client.get(f"/api/orders/{order.id}")
+    resp = client.get(f"/api/orders/{order.id}", headers={"X-Order-Access": _order_access(order.id)})
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "PENDING"
@@ -37,7 +44,7 @@ def test_get_order_ready_with_download_url(client, db_session):
     ))
     db_session.flush()
 
-    resp = client.get(f"/api/orders/{order.id}")
+    resp = client.get(f"/api/orders/{order.id}", headers={"X-Order-Access": _order_access(order.id)})
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "READY"
@@ -45,7 +52,13 @@ def test_get_order_ready_with_download_url(client, db_session):
 
 
 def test_get_order_not_found(client):
-    resp = client.get("/api/orders/99999")
+    resp = client.get("/api/orders/99999", headers={"X-Order-Access": _order_access(99999)})
+    assert resp.status_code == 404
+
+
+def test_get_order_requires_access_token(client, db_session):
+    order = _create_order(db_session, OrderStatus.PENDING)
+    resp = client.get(f"/api/orders/{order.id}")
     assert resp.status_code == 404
 
 
@@ -73,9 +86,8 @@ def test_stripe_polling_fallback_fulfills_pending_order(
     fake_session.payment_status = "paid"
     fake_session.payment_intent = "pi_test_polling"
     fake_session.customer_email = "runner@example.com"
-
     with patch("app.routes.orders.stripe.checkout.Session.retrieve", return_value=fake_session):
-        resp = client.get(f"/api/orders/{order.id}")
+        resp = client.get(f"/api/orders/{order.id}", headers={"X-Order-Access": _order_access(order.id)})
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "PAID"
@@ -104,9 +116,8 @@ def test_stripe_polling_fallback_skips_placeholder_session(
     )
     db_session.add(order)
     db_session.flush()
-
     with patch("app.routes.orders.stripe.checkout.Session.retrieve") as mock_retrieve:
-        resp = client.get(f"/api/orders/{order.id}")
+        resp = client.get(f"/api/orders/{order.id}", headers={"X-Order-Access": _order_access(order.id)})
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "PENDING"
@@ -132,9 +143,8 @@ def test_stripe_polling_fallback_ignores_unpaid_session(
 
     fake_session = MagicMock()
     fake_session.payment_status = "unpaid"
-
     with patch("app.routes.orders.stripe.checkout.Session.retrieve", return_value=fake_session):
-        resp = client.get(f"/api/orders/{order.id}")
+        resp = client.get(f"/api/orders/{order.id}", headers={"X-Order-Access": _order_access(order.id)})
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "PENDING"

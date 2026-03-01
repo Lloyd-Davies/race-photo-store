@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, Download, Loader2, XCircle, Clock } from 'lucide-react'
 import { fetchOrder, type OrderStatus as Status } from '../api/orders'
@@ -42,12 +42,22 @@ function StatusStep({ label, done, active }: { label: string; done: boolean; act
 
 export default function OrderStatus() {
   const { orderId } = useParams<{ orderId: string }>()
+  const location = useLocation()
   const id = Number(orderId)
   const clear = useCartStore((s) => s.clear)
+  const queryAccessToken = new URLSearchParams(location.search).get('access_token') || undefined
+  const storageKey = Number.isNaN(id) ? null : `orderAccessToken:${id}`
+  const storedAccessToken = storageKey ? localStorage.getItem(storageKey) || undefined : undefined
+  const orderAccessToken = queryAccessToken || storedAccessToken
+
+  useEffect(() => {
+    if (!storageKey || !queryAccessToken) return
+    localStorage.setItem(storageKey, queryAccessToken)
+  }, [storageKey, queryAccessToken])
 
   const { data: order, error } = useQuery({
-    queryKey: ['order', id],
-    queryFn: () => fetchOrder(id),
+    queryKey: ['order', id, orderAccessToken],
+    queryFn: () => fetchOrder(id, orderAccessToken),
     enabled: !isNaN(id),
     refetchInterval: (query) => {
       const status = query.state.data?.status

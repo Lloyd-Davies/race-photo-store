@@ -2,10 +2,11 @@ import logging
 from datetime import datetime, timezone
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from app.order_access import verify_order_access_token
 from app.rate_limit import enforce_rate_limit
 from app.schemas import OrderOut
 from photostore.celery_app import celery_app
@@ -48,8 +49,18 @@ def _try_fulfill_from_stripe(order: Order, db: Session) -> None:
 
 
 @router.get("/orders/{order_id}", response_model=OrderOut)
-def get_order(order_id: int, request: Request, db: Session = Depends(get_db)) -> OrderOut:
+def get_order(
+    order_id: int,
+    request: Request,
+    access_token: str | None = Query(default=None),
+    x_order_access: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> OrderOut:
     enforce_rate_limit(request, scope="order-status", limit=120, window_seconds=60)
+
+    provided_token = x_order_access or access_token
+    if not verify_order_access_token(provided_token, order_id):
+        raise HTTPException(404, "Order not found")
 
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:

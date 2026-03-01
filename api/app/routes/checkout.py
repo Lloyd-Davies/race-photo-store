@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
 from photostore.config import settings
 from photostore.models import Cart, Order, OrderItem, OrderStatus
@@ -61,6 +62,8 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
             )
         )
 
+    order_access_token, _ = create_order_access_token(order.id)
+
     # Create Stripe Checkout session — success URL uses our numeric order ID
     # so the frontend can poll GET /api/orders/{order_id} immediately on return.
     session = stripe.checkout.Session.create(
@@ -68,7 +71,7 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
         line_items=[{"price": settings.STRIPE_PRICE_ID, "quantity": count}],
         customer_email=cart.email or None,
         metadata={"cart_id": str(cart.id), "event_id": str(cart.event_id)},
-        success_url=f"{settings.PUBLIC_BASE_URL}/orders/{order.id}",
+        success_url=f"{settings.PUBLIC_BASE_URL}/orders/{order.id}?access_token={order_access_token}",
         cancel_url=f"{settings.PUBLIC_BASE_URL}/",
     )
 
@@ -76,4 +79,8 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     db.commit()
     db.refresh(order)
 
-    return CheckoutOut(order_id=order.id, stripe_checkout_url=session.url)
+    return CheckoutOut(
+        order_id=order.id,
+        stripe_checkout_url=session.url,
+        order_access_token=order_access_token,
+    )

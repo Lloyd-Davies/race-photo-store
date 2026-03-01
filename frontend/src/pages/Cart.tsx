@@ -32,6 +32,7 @@ export default function Cart() {
 
       // Store order ID so we can return to it if the user navigates back
       localStorage.setItem('lastOrderId', String(checkout.order_id))
+      localStorage.setItem(`orderAccessToken:${checkout.order_id}`, checkout.order_access_token)
 
       // Hand off to Stripe — browser navigates away
       window.location.href = checkout.stripe_checkout_url

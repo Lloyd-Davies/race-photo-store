@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     ADMIN_TOKEN: str = ""
     EVENT_ACCESS_SECRET: str = ""
     EVENT_ACCESS_TTL_HOURS: int = 12
+    ORDER_ACCESS_TTL_HOURS: int = 720
     MAX_PHOTO_UPLOAD_BYTES: int = 25 * 1024 * 1024
     CELERY_CONCURRENCY: int = 2
     UVICORN_WORKERS: int = 2

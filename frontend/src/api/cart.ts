@@ -8,6 +8,7 @@ export interface CartResponse {
 export interface CheckoutResponse {
   order_id: number
   stripe_checkout_url: string
+  order_access_token: string
 }
 
 export const createCart = (body: {

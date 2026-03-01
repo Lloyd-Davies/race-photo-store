@@ -73,6 +73,7 @@ class CheckoutRequest(BaseModel):
 class CheckoutOut(BaseModel):
     order_id: int
     stripe_checkout_url: str
+    order_access_token: str
 
 
 # ---------------------------------------------------------------------------

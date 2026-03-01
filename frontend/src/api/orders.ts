@@ -8,4 +8,8 @@ export interface Order {
   download_url?: string
 }
 
-export const fetchOrder = (orderId: number) => apiGet<Order>(`/orders/${orderId}`)
+export const fetchOrder = (orderId: number, accessToken?: string) =>
+  apiGet<Order>(
+    `/orders/${orderId}`,
+    accessToken ? { 'X-Order-Access': accessToken } : undefined,
+  )
