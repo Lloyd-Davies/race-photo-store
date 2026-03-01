@@ -1,67 +1,34 @@
 # race-photo-store
 
-Self-hosted sports event photo proofing and sales platform.
+Minimal self-hosted race photo platform.
 
-Athletes browse public watermarked proofs, select images, pay via Stripe Checkout, and download a ZIP of full-resolution originals.
+Athletes browse proofs, checkout with Stripe, and download originals as ZIPs.
 
-## Architecture
+## At a glance
 
-| Service | Technology |
+| Layer | Stack |
 |---|---|
 | API | FastAPI + SQLAlchemy + Alembic |
 | Worker | Celery |
-| Database | PostgreSQL 16 |
-| Broker/Cache | Redis 7 |
-| Reverse proxy | Nginx |
+| Data | PostgreSQL 16 + Redis 7 |
+| Edge | Nginx + Cloudflare Tunnel |
 | Frontend | React + Vite + Tailwind |
-| Deployment | Docker Compose + Portainer + Cloudflare Tunnel |
 
-## Key capabilities
+## Network requirement (current)
 
-- Public event gallery with proof image browsing
-- Bib search and time-of-day filtering (`start_time`, `end_time`)
-- Fullscreen proof viewer from gallery cards
-- Stripe Checkout order flow
-- Async ZIP generation in worker
-- Tokenized download links served through nginx `X-Accel-Redirect`
-- Admin event ingest + bib tagging
-- Admin event editing (name/date/location/status)
-- Admin order management tools (reset delivery, rebuild ZIP, expire links)
-- Admin operational snapshot stats
+The current production compose setup expects **Cloudflare Tunnel** for public ingress.
 
-## Repository layout
+Traffic path:
 
-```text
-api/                # FastAPI application
-frontend/           # React/Vite frontend
-worker/             # Celery tasks (ZIP build etc.)
-shared/photostore/  # shared models/config/db package
-nginx/              # nginx config + image build
-docker-compose.yml
-.env.example
-```
+`Internet -> Cloudflare -> cloudflared -> nginx -> api/frontend`
 
-## Environment variables
+Notes:
 
-| Variable | Description |
-|---|---|
-| POSTGRES_PASSWORD | PostgreSQL password |
-| STRIPE_SECRET_KEY | Stripe secret key (`sk_test_...`) |
-| STRIPE_WEBHOOK_SECRET | Stripe webhook signing secret |
-| STRIPE_PRICE_ID | Stripe Price ID for one photo |
-| PUBLIC_BASE_URL | Public site URL (for links) |
-| ADMIN_TOKEN | Base admin credential used at login |
-| ADMIN_SESSION_SECRET | Signing secret for admin access/refresh tokens |
-| ADMIN_SESSION_TTL_MINUTES | Admin access token TTL in minutes |
-| ADMIN_REFRESH_TTL_HOURS | Admin refresh token TTL in hours |
-| EVENT_ACCESS_TTL_HOURS | Event access token TTL in hours |
-| ORDER_ACCESS_TTL_HOURS | Order access token TTL in hours |
-| MAX_PHOTO_UPLOAD_BYTES | Max bytes accepted by admin photo upload endpoint |
-| SITE_NAME | Frontend branding title |
-| SITE_TAGLINE | Frontend branding tagline |
-| CLOUDFLARE_TUNNEL_TOKEN | Cloudflare tunnel token used by `cloudflared` |
+- `docker-compose.yml` binds nginx to `127.0.0.1:8081`, so external traffic is intended to come through Cloudflare Tunnel.
+- `CLOUDFLARE_TUNNEL_TOKEN` is required for current production exposure.
+- Local dev can run without tunnel (see `docker-compose.local.yml`, where `cloudflared` is disabled by profile).
 
-## Local development
+## Quick start (local)
 
 1) Create env file:
 
@@ -75,124 +42,109 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-For local data mounts, use `docker-compose.override.yml` (already included in repo).
+3) Health check:
 
-## Production deployment (Oracle + Portainer)
+```bash
+curl http://localhost:8081/api/health
+```
 
-This repository is production-configured to run from GHCR images in `docker-compose.yml`.
+## Production (current compose)
 
-1) Prepare host directories on the server:
+1) Prepare host dirs:
 
 ```bash
 sudo mkdir -p /mnt/pstore/{pgdata,redis,photos}
 sudo chown -R $USER:$USER /mnt/pstore
 ```
 
-2) Create a production `.env` from `.env.example` and fill at least:
+2) Set required env:
 
 - `POSTGRES_PASSWORD`
 - `PUBLIC_BASE_URL`
 - `ADMIN_TOKEN`
 - `CLOUDFLARE_TUNNEL_TOKEN`
-- Stripe vars (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`) when enabling payments
 
-3) Ensure GHCR images are pullable by your deployment environment:
+3) Optional but recommended:
 
-- Option A: package is public (simplest)
-- Option B: package private + registry credentials in Portainer (`ghcr.io`, username, PAT with `read:packages`)
+- `ADMIN_SESSION_SECRET`
+- Stripe vars (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`)
 
-4) In Portainer, deploy/update stack with:
+4) Deploy `docker-compose.yml` (Portainer or Docker), then verify:
 
-- Compose file: `docker-compose.yml`
-- Env file values populated from your `.env`
-- Force pull latest images on update
-
-5) Verify service health after deploy:
-
-- `postgres`, `redis`, `api`, `worker`, `nginx`, `cloudflared` are running
 - `GET /api/health` returns healthy
-- Admin login works with `ADMIN_TOKEN`
+- admin login works
+- gallery, checkout, and download flow work end-to-end
 
-6) File/storage expectations:
+## Security model
 
-- Proofs uploaded to: `/mnt/pstore/photos/proofs/<event-slug>/*.jpg`
-- Originals uploaded to: `/mnt/pstore/photos/originals/<event-slug>/*.jpg`
-- Generated ZIPs in: `/mnt/pstore/photos/zips/`
+- Admin uses login + signed short-lived session tokens (`/api/admin/login`, `/api/admin/refresh`).
+- Event locking is **per-event** and configured at event creation/edit (hashed secret storage).
+- Order status access is signed-token protected (prevents order ID enumeration).
+- Proof and ZIP delivery are gated via API checks + nginx internal locations.
+- Sensitive endpoints are rate-limited (API and nginx edge controls).
+- Admin upload path enforces a max upload size.
 
-7) Typical production update flow:
+## Core API
 
-- Push code to `dev` (CI builds/pushes fresh GHCR `:latest` images)
-- Redeploy stack in Portainer with pull enabled
-- Smoke-test gallery, checkout/order status, and admin actions
+Public:
 
-## API highlights
+- `GET /api/events`
+- `GET /api/events/{id}/photos`
+- `POST /api/events/{id}/unlock`
 
-- Public:
-  - `GET /api/events`
-  - `GET /api/events/{id}/photos?page=1&bib=123&start_time=09:00&end_time=11:30`
-- Checkout:
-  - `POST /api/carts`
-  - `POST /api/checkout`
-- Orders:
-  - `GET /api/orders/{id}`
-  - `GET /d/{token}`
-- Admin:
-  - `POST /api/admin/events`
-    - `POST /api/admin/login`
-    - `POST /api/admin/refresh`
-  - `PATCH /api/admin/events/{id}`
-  - `POST /api/admin/events/{id}/ingest`
-  - `POST /api/admin/events/{id}/tags/bibs`
-  - `GET /api/admin/stats`
-  - `GET /api/admin/orders`
-  - `POST /api/admin/orders/{id}/reset-delivery`
-  - `POST /api/admin/orders/{id}/rebuild-zip`
-  - `POST /api/admin/orders/{id}/expire-delivery`
+Checkout and delivery:
 
-## Release strategy
+- `POST /api/carts`
+- `POST /api/checkout`
+- `GET /api/orders/{id}`
+- `GET /d/{token}`
 
-Recommended workflow:
+Admin:
 
-1) `dev` = active integration branch (feature work, fixes, validation).
-2) `main` = stable release branch (only fast-forward/PR merges from validated `dev`).
-3) Tag releases from `main` (for example `v0.2.0`) after smoke tests on production-like deploy.
+- `POST /api/admin/login`
+- `POST /api/admin/refresh`
+- `POST /api/admin/events`
+- `PATCH /api/admin/events/{id}`
+- `POST /api/admin/events/{id}/ingest`
+- `POST /api/admin/events/{id}/tags/bibs`
+- `GET /api/admin/orders`
 
-Why this works well here:
+## Configuration
 
-- Your CI currently builds/pushes images on both `dev` and `main`.
-- Keeping releases tagged from `main` gives you a clean, auditable production line.
-- `dev` remains fast for ongoing work while `main` is easier to rollback and communicate.
+Primary env vars:
 
-Suggested release steps:
+| Variable | Purpose |
+|---|---|
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `PUBLIC_BASE_URL` | Public URL used in generated links |
+| `ADMIN_TOKEN` | Base admin credential for login |
+| `ADMIN_SESSION_SECRET` | Signing key for admin/event/order access tokens |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare tunnel connector token |
 
-1) Confirm `dev` is green (tests/build) and deployed successfully to your live/staging stack.
-2) Open PR `dev -> main` and merge.
-3) Create annotated tag on `main` (`vX.Y.Z`) and push tag.
-4) (Optional) Publish GitHub Release notes for that tag.
-5) In Portainer, redeploy pinned version if you adopt versioned image tags later; with `:latest`, redeploy immediately after merge.
+Security tuning:
 
-Image tag behavior from CI:
+| Variable | Default |
+|---|---|
+| `ADMIN_SESSION_TTL_MINUTES` | `30` |
+| `ADMIN_REFRESH_TTL_HOURS` | `12` |
+| `EVENT_ACCESS_TTL_HOURS` | `12` |
+| `ORDER_ACCESS_TTL_HOURS` | `720` |
+| `MAX_PHOTO_UPLOAD_BYTES` | `26214400` |
 
-- `dev` pushes: `dev-latest` and `dev-<shortsha>`
-- `main` pushes: `latest` and `main-<shortsha>`
-- `v*` tags (for example `v0.1.0`): immutable version tags like `api:v0.1.0`, `worker:v0.1.0`, `nginx:v0.1.0`
-
-## Operational notes
-
-- Download links are expiry-limited and count-limited.
-- ZIP outputs are generated with readable permissions for nginx delivery.
-- If Stripe webhooks are unreachable in dev, the order endpoint includes fallback status fulfillment behavior.
-
-## Testing
-
-Backend tests:
+## Validation
 
 ```bash
 python -m pytest api/tests -q
+python -m pytest worker/tests -q
+npm --prefix frontend run build
 ```
 
-Frontend build check:
+## Repo layout
 
-```bash
-npm --prefix frontend run build
+```text
+api/                FastAPI application
+worker/             Celery tasks
+frontend/           React app
+shared/photostore/  Shared models/config/db
+nginx/              Nginx config and image
 ```
