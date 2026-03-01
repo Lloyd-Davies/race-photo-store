@@ -1,12 +1,14 @@
-/** Typed API client. Reads X-Admin-Token from sessionStorage when present. */
+/** Typed API client. Reads admin bearer access token from sessionStorage when present. */
+
+const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken'
 
 const BASE = '/api'
 
 function getHeaders(extra?: HeadersInit): Headers {
   const h = new Headers(extra)
   h.set('Content-Type', 'application/json')
-  const token = sessionStorage.getItem('adminToken')
-  if (token) h.set('X-Admin-Token', token)
+  const token = sessionStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
+  if (token) h.set('Authorization', `Bearer ${token}`)
   return h
 }
 

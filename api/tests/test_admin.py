@@ -71,6 +71,39 @@ def test_admin_session_valid(admin_client):
     assert resp.json() == {"ok": True}
 
 
+def test_admin_login_issues_tokens(client):
+    resp = client.post("/api/admin/login", json={"admin_token": "test-admin-token"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["access_token"]
+    assert data["refresh_token"]
+    assert data["access_expires_at"]
+    assert data["refresh_expires_at"]
+
+
+def test_admin_login_rejects_invalid_token(client):
+    resp = client.post("/api/admin/login", json={"admin_token": "wrong-token"})
+    assert resp.status_code == 401
+
+
+def test_admin_refresh_rotates_session(client):
+    login = client.post("/api/admin/login", json={"admin_token": "test-admin-token"})
+    assert login.status_code == 200
+    refresh_token = login.json()["refresh_token"]
+
+    refresh = client.post("/api/admin/refresh", json={"refresh_token": refresh_token})
+    assert refresh.status_code == 200
+    data = refresh.json()
+    assert data["access_token"]
+    assert data["refresh_token"]
+
+    session = client.get(
+        "/api/admin/session",
+        headers={"Authorization": f"Bearer {data['access_token']}"},
+    )
+    assert session.status_code == 200
+
+
 def test_admin_session_requires_admin_token(client):
     resp = client.get("/api/admin/session")
     assert resp.status_code == 401

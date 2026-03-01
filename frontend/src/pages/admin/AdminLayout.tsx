@@ -3,10 +3,12 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarDays, LogOut, ShieldAlert, ReceiptText } from 'lucide-react'
 import Button from '../../components/Button'
-import { fetchAdminStats, verifyAdminSession } from '../../api/adminStats'
+import { fetchAdminStats } from '../../api/adminStats'
+import { adminLogin, refreshAdminSession, verifyAdminSession } from '../../api/adminAuth'
 import { Skeleton } from '../../components/Skeleton'
 
-const ADMIN_TOKEN_KEY = 'adminToken'
+const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken'
+const ADMIN_REFRESH_TOKEN_KEY = 'adminRefreshToken'
 
 export default function AdminLayout() {
   const [authed, setAuthed] = useState(false)
@@ -24,32 +26,79 @@ export default function AdminLayout() {
   })
 
   useEffect(() => {
-    const token = sessionStorage.getItem(ADMIN_TOKEN_KEY)
-    if (!token) {
+    const accessToken = sessionStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
+    const refreshToken = sessionStorage.getItem(ADMIN_REFRESH_TOKEN_KEY)
+
+    if (!accessToken && !refreshToken) {
       setCheckingStoredToken(false)
       return
     }
 
-    verifyAdminSession(token)
-      .then(() => {
-        setAuthed(true)
-      })
-      .catch(() => {
-        sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+    const verifyOrRefresh = async () => {
+      try {
+        if (accessToken) {
+          await verifyAdminSession(accessToken)
+          setAuthed(true)
+          return
+        }
+
+        if (refreshToken) {
+          const next = await refreshAdminSession(refreshToken)
+          sessionStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, next.access_token)
+          sessionStorage.setItem(ADMIN_REFRESH_TOKEN_KEY, next.refresh_token)
+          setAuthed(true)
+          return
+        }
+
+        setAuthed(false)
+      } catch {
+        sessionStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+        sessionStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
         setAuthed(false)
         setError('Your admin session has expired. Please sign in again.')
-      })
-      .finally(() => {
+      } finally {
         setCheckingStoredToken(false)
-      })
+      }
+    }
+
+    void verifyOrRefresh()
   }, [])
+
+  useEffect(() => {
+    if (!authed) return
+
+    const refresh = async () => {
+      const refreshToken = sessionStorage.getItem(ADMIN_REFRESH_TOKEN_KEY)
+      if (!refreshToken) {
+        return
+      }
+
+      try {
+        const next = await refreshAdminSession(refreshToken)
+        sessionStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, next.access_token)
+        sessionStorage.setItem(ADMIN_REFRESH_TOKEN_KEY, next.refresh_token)
+      } catch {
+        sessionStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+        sessionStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
+        setAuthed(false)
+        setError('Your admin session is no longer valid. Please sign in again.')
+      }
+    }
+
+    const id = window.setInterval(() => {
+      void refresh()
+    }, 5 * 60 * 1000)
+
+    return () => window.clearInterval(id)
+  }, [authed])
 
   useEffect(() => {
     if (!statsError) return
     const msg = statsError instanceof Error ? statsError.message : ''
     if (!msg.startsWith('401:')) return
 
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+    sessionStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+    sessionStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
     setAuthed(false)
     setError('Your admin session is no longer valid. Please sign in again.')
   }, [statsError])
@@ -65,21 +114,24 @@ export default function AdminLayout() {
     setLoadingLogin(true)
     setError(null)
     try {
-      await verifyAdminSession(token)
-      sessionStorage.setItem(ADMIN_TOKEN_KEY, token)
+      const session = await adminLogin(token)
+      sessionStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, session.access_token)
+      sessionStorage.setItem(ADMIN_REFRESH_TOKEN_KEY, session.refresh_token)
       setAuthed(true)
       setInput('')
     } catch {
-      sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+      sessionStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+      sessionStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
       setAuthed(false)
-      setError('Invalid admin token.')
+      setError('Invalid admin credentials.')
     } finally {
       setLoadingLogin(false)
     }
   }
 
   function handleLogout() {
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+    sessionStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+    sessionStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
     setAuthed(false)
     setError(null)
     navigate('/admin/events')
@@ -109,7 +161,7 @@ export default function AdminLayout() {
               autoFocus
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Admin token"
+              placeholder="Admin credential"
               className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
             />
             {error && (

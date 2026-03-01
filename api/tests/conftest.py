@@ -107,8 +107,11 @@ def client(db_session):
 
 @pytest.fixture()
 def admin_client(client):
-    """TestClient with admin token pre-set."""
-    client.headers.update({"X-Admin-Token": "test-admin-token"})
+    """TestClient authenticated with bearer admin session token."""
+    login = client.post("/api/admin/login", json={"admin_token": "test-admin-token"})
+    assert login.status_code == 200
+    access_token = login.json()["access_token"]
+    client.headers.update({"Authorization": f"Bearer {access_token}"})
     return client
 
 

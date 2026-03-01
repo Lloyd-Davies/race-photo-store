@@ -1,21 +1,27 @@
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import hmac
 import re
 import tempfile
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func
 
+from app.admin_session import create_admin_session_tokens, verify_admin_session_token
 from app.deps import get_db, require_admin
 from app.event_access import hash_event_password
+from app.rate_limit import enforce_rate_limit
 from app.schemas import (
+    AdminLoginRequest,
     AdminStatsOut,
+    AdminRefreshRequest,
     AdminOrderListOut,
     AdminOrderOut,
     AdminResetDeliveryRequest,
+    AdminSessionOut,
     BibTagsRequest,
     BibTagsResult,
     CreateEventRequest,
@@ -91,6 +97,49 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
         max_downloads=delivery.max_downloads if delivery else None,
         expires_at=delivery.expires_at if delivery else None,
         download_url=(f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}" if delivery else None),
+    )
+
+
+@router.post("/login", response_model=AdminSessionOut)
+def admin_login(
+    req: AdminLoginRequest,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> AdminSessionOut:
+    enforce_rate_limit(request, scope="admin-login", limit=20, window_seconds=60)
+
+    provided = req.admin_token.strip() if req.admin_token else ""
+    fallback = x_admin_token.strip() if x_admin_token else ""
+    candidate = provided or fallback
+
+    if not candidate or not settings.ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+    if not hmac.compare_digest(candidate, settings.ADMIN_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+    access_token, access_expires_at, refresh_token, refresh_expires_at = create_admin_session_tokens()
+    return AdminSessionOut(
+        access_token=access_token,
+        access_expires_at=access_expires_at,
+        refresh_token=refresh_token,
+        refresh_expires_at=refresh_expires_at,
+    )
+
+
+@router.post("/refresh", response_model=AdminSessionOut)
+def refresh_admin_session(req: AdminRefreshRequest, request: Request) -> AdminSessionOut:
+    enforce_rate_limit(request, scope="admin-refresh", limit=40, window_seconds=60)
+
+    if not verify_admin_session_token(req.refresh_token, token_type="refresh"):
+        raise HTTPException(status_code=401, detail="Invalid admin refresh token")
+
+    access_token, access_expires_at, refresh_token, refresh_expires_at = create_admin_session_tokens()
+    return AdminSessionOut(
+        access_token=access_token,
+        access_expires_at=access_expires_at,
+        refresh_token=refresh_token,
+        refresh_expires_at=refresh_expires_at,
     )
 
 

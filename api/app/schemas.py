@@ -202,3 +202,18 @@ class AdminStatsOut(BaseModel):
     pending_orders: int
     failed_orders: int
     active_events: int
+
+
+class AdminLoginRequest(BaseModel):
+    admin_token: str
+
+
+class AdminRefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class AdminSessionOut(BaseModel):
+    access_token: str
+    access_expires_at: datetime
+    refresh_token: str
+    refresh_expires_at: datetime
