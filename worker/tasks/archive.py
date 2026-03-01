@@ -12,6 +12,27 @@ from photostore.models import Event, EventStatus, Photo, PhotoState
 ZSTD_COMPRESSION_LEVEL = 3
 
 
+def _safe_extract_member(member: tarfile.TarInfo, destination: Path) -> None:
+    name = member.name
+
+    if name.startswith("/") or name.startswith("\\"):
+        raise ValueError(f"Unsafe archive member path: {name}")
+
+    if member.issym() or member.islnk() or member.isdev():
+        raise ValueError(f"Unsafe archive member type: {name}")
+
+    target_path = (destination / name).resolve()
+    destination_root = destination.resolve()
+    if target_path != destination_root and destination_root not in target_path.parents:
+        raise ValueError(f"Archive member escapes destination: {name}")
+
+
+def _safe_extract_tar_stream(tar: tarfile.TarFile, destination: Path) -> None:
+    for member in tar:
+        _safe_extract_member(member, destination)
+        tar.extract(member, path=destination)
+
+
 @celery_app.task(name="tasks.archive.archive_event")
 def archive_event(event_id: int) -> None:
     db = SessionLocal()
@@ -73,7 +94,7 @@ def restore_event(event_id: int) -> None:
         with open(archive_path, "rb") as fh:
             with dctx.stream_reader(fh) as reader:
                 with tarfile.open(fileobj=reader, mode="r|") as tar:  # type: ignore[arg-type]
-                    tar.extractall(path=originals_parent)
+                    _safe_extract_tar_stream(tar, originals_parent)
 
         # Update photo states back to READY
         db.query(Photo).filter(Photo.event_id == event_id).update(

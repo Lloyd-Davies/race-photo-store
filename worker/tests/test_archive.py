@@ -193,3 +193,36 @@ def test_restore_event_missing_archive_raises(db_session, tmp_path, monkeypatch)
 
     result = arch_module.restore_event.apply(args=[event.id])
     assert result.failed()
+
+
+def test_restore_event_rejects_path_traversal_members(db_session, tmp_path, monkeypatch):
+    import io
+    import tarfile
+    import zstandard as zstd
+
+    from photostore.config import settings
+    from worker.tasks import archive as arch_module
+
+    storage = tmp_path / "photos"
+    event = _seed_event(db_session, storage, with_originals=False, with_archive=False)
+
+    archive_dir = storage / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = archive_dir / f"{event.slug}.tar.zst"
+
+    cctx = zstd.ZstdCompressor(level=3)
+    with open(archive_path, "wb") as fh:
+        with cctx.stream_writer(fh, closefd=False) as writer:
+            with tarfile.open(fileobj=writer, mode="w|") as tar:  # type: ignore[arg-type]
+                payload = b"owned"
+                info = tarfile.TarInfo(name="../escape.txt")
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    monkeypatch.setattr(arch_module, "SessionLocal", lambda: db_session)
+
+    outside = storage / "escape.txt"
+    result = arch_module.restore_event.apply(args=[event.id])
+    assert result.failed()
+    assert not outside.exists()
