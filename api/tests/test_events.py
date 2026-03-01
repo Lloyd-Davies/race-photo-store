@@ -13,6 +13,52 @@ def test_list_events(client, test_event):
     assert data[0]["name"] == test_event.name
 
 
+def test_list_events_enforces_visibility_windows(client, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from photostore.models import Event, EventStatus
+
+    now = datetime.now(timezone.utc)
+    visible = Event(
+        slug="visible-event",
+        name="Visible Event",
+        date=now,
+        status=EventStatus.ACTIVE,
+        public_until=now + timedelta(days=2),
+        archive_after=now + timedelta(days=7),
+    )
+    expired_public = Event(
+        slug="expired-public-event",
+        name="Expired Public",
+        date=now,
+        status=EventStatus.ACTIVE,
+        public_until=now - timedelta(minutes=1),
+    )
+    archived_status = Event(
+        slug="archived-status-event",
+        name="Archived Status",
+        date=now,
+        status=EventStatus.ARCHIVED,
+    )
+    archived_by_window = Event(
+        slug="archive-window-event",
+        name="Archive Window",
+        date=now,
+        status=EventStatus.ACTIVE,
+        archive_after=now - timedelta(minutes=1),
+    )
+    db_session.add_all([visible, expired_public, archived_status, archived_by_window])
+    db_session.flush()
+
+    resp = client.get("/api/events")
+    assert resp.status_code == 200
+    slugs = {event["slug"] for event in resp.json()}
+    assert "visible-event" in slugs
+    assert "expired-public-event" not in slugs
+    assert "archived-status-event" not in slugs
+    assert "archive-window-event" not in slugs
+
+
 def test_list_photos(client, test_event, test_photos):
     resp = client.get(f"/api/events/{test_event.id}/photos")
     assert resp.status_code == 200
@@ -55,6 +101,33 @@ def test_list_photos_bib_filter(client, db_session, test_event, test_photos):
 
 def test_list_photos_unknown_event(client):
     resp = client.get("/api/events/99999/photos")
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
+def test_list_photos_hidden_event_returns_empty(client, db_session):
+    from datetime import datetime, timezone
+
+    from photostore.models import Event, EventStatus, Photo
+
+    event = Event(
+        slug="hidden-event",
+        name="Hidden Event",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        status=EventStatus.ARCHIVED,
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="hidden-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/hidden-001.jpg",
+        original_path=f"originals/{event.slug}/hidden-001.jpg",
+    ))
+    db_session.flush()
+
+    resp = client.get(f"/api/events/{event.id}/photos")
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
 
@@ -207,3 +280,59 @@ def test_get_event_proof_locked_requires_token(client, db_session, tmp_path, mon
         f"/api/events/{event.id}/photos/locked-proof-001/proof?access_token={token}",
     )
     assert unlocked_query.status_code == 200
+
+
+def test_unlock_hidden_event_returns_not_found(client, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from app.event_access import hash_event_password
+    from photostore.models import Event
+
+    now = datetime.now(timezone.utc)
+    event = Event(
+        slug="hidden-locked-event",
+        name="Hidden Locked Event",
+        date=now,
+        is_password_protected=True,
+        access_password_hash=hash_event_password("secret123"),
+        public_until=now - timedelta(minutes=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    resp = client.post(f"/api/events/{event.id}/unlock", json={"password": "secret123"})
+    assert resp.status_code == 404
+
+
+def test_get_event_proof_hidden_event_returns_not_found(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, EventStatus, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="hidden-proof-event",
+        name="Hidden Proof Event",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        status=EventStatus.ARCHIVED,
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="hidden-proof-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/hidden-proof-001.jpg",
+        original_path=f"originals/{event.slug}/hidden-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    proof = storage / "proofs" / event.slug / "hidden-proof-001.jpg"
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    proof.write_bytes(b"FAKEJPEG")
+
+    resp = client.get(f"/api/events/{event.id}/photos/hidden-proof-001/proof")
+    assert resp.status_code == 404
