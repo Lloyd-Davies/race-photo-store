@@ -421,12 +421,16 @@ def upload_bib_tags(
         ).delete(synchronize_session="fetch")
 
     for entry in req.tags:
+        bib_value = entry.bib.strip()
+        if not bib_value:
+            continue
+
         exists = (
             db.query(PhotoTag)
             .filter(
                 PhotoTag.photo_id == entry.photo_id,
                 PhotoTag.tag_type == "bib",
-                PhotoTag.value == entry.bib,
+                func.trim(PhotoTag.value) == bib_value,
             )
             .first()
         )
@@ -435,7 +439,7 @@ def upload_bib_tags(
                 PhotoTag(
                     photo_id=entry.photo_id,
                     tag_type="bib",
-                    value=entry.bib,
+                    value=bib_value,
                     confidence=entry.confidence,
                 )
             )

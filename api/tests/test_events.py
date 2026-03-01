@@ -99,6 +99,24 @@ def test_list_photos_bib_filter(client, db_session, test_event, test_photos):
     assert data["photos"][0]["photo_id"] == test_photos[0].id
 
 
+def test_list_photos_bib_filter_matches_trimmed_and_zero_padded_values(client, db_session, test_event, test_photos):
+    from photostore.models import PhotoTag
+
+    db_session.add(PhotoTag(
+        photo_id=test_photos[0].id,
+        tag_type="bib",
+        value=" 0042 ",
+        confidence=0.99,
+    ))
+    db_session.flush()
+
+    resp = client.get(f"/api/events/{test_event.id}/photos?bib=42")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["photos"][0]["photo_id"] == test_photos[0].id
+
+
 def test_list_photos_unknown_event(client):
     resp = client.get("/api/events/99999/photos")
     assert resp.status_code == 200

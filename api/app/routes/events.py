@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from sqlalchemy import cast, Time, or_
+from sqlalchemy import cast, Time, func, or_
 
 from app.deps import get_db
 from app.event_access import create_event_access_token, verify_event_access_token, verify_event_password
@@ -63,10 +63,20 @@ def list_photos(
     q = db.query(Photo).filter(Photo.event_id == event_id)
 
     if bib is not None:
-        q = q.join(PhotoTag).filter(
-            PhotoTag.tag_type == "bib",
-            PhotoTag.value == bib,
-        )
+        bib_value = bib.strip()
+        tag_value = func.trim(PhotoTag.value)
+        q = q.join(PhotoTag).filter(PhotoTag.tag_type == "bib")
+        if bib_value.isdigit():
+            normalized_digits = bib_value.lstrip("0") or "0"
+            q = q.filter(
+                or_(
+                    tag_value == bib_value,
+                    func.ltrim(tag_value, "0") == normalized_digits,
+                )
+            )
+        else:
+            q = q.filter(tag_value == bib_value)
+        q = q.distinct()
 
     start_time_obj: time | None = None
     end_time_obj: time | None = None

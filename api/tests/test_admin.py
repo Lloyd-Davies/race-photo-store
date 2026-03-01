@@ -252,6 +252,31 @@ def test_upload_bib_tags_idempotent(admin_client, test_event, test_photos):
     assert resp.json()["added"] == 0  # duplicate, not re-added
 
 
+def test_upload_bib_tags_trims_and_deduplicates_equivalent_values(admin_client, db_session, test_event, test_photos):
+    from photostore.models import PhotoTag
+
+    first = {
+        "tags": [{"photo_id": test_photos[0].id, "bib": " 0042 ", "confidence": 0.99}],
+    }
+    second = {
+        "tags": [{"photo_id": test_photos[0].id, "bib": "0042", "confidence": 0.90}],
+    }
+
+    r1 = admin_client.post(f"/api/admin/events/{test_event.id}/tags/bibs", json=first)
+    assert r1.status_code == 200
+    assert r1.json()["added"] == 1
+
+    r2 = admin_client.post(f"/api/admin/events/{test_event.id}/tags/bibs", json=second)
+    assert r2.status_code == 200
+    assert r2.json()["added"] == 0
+
+    tag = db_session.query(PhotoTag).filter(
+        PhotoTag.photo_id == test_photos[0].id,
+        PhotoTag.tag_type == "bib",
+    ).one()
+    assert tag.value == "0042"
+
+
 # ── Orders management ────────────────────────────────────────────────────────
 
 def _create_ready_order_with_delivery(db_session, test_photos):
