@@ -3,13 +3,14 @@ from datetime import datetime, time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import cast, Time
 
 from app.deps import get_db
 from app.event_access import create_event_access_token, verify_event_access_token, verify_event_password
+from app.rate_limit import enforce_rate_limit
 from app.schemas import EventOut, EventUnlockOut, EventUnlockRequest, PhotoListOut, PhotoOut
 from photostore.config import settings
 from photostore.models import Event, Photo, PhotoTag
@@ -92,8 +93,11 @@ def list_photos(
 def unlock_event(
     event_id: int,
     req: EventUnlockRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> EventUnlockOut:
+    enforce_rate_limit(request, scope="event-unlock", limit=15, window_seconds=60, suffix=str(event_id))
+
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(404, "Event not found")

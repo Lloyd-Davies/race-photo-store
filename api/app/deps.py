@@ -1,8 +1,9 @@
 from typing import Generator, Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.rate_limit import enforce_rate_limit
 from photostore.config import settings
 from photostore.db import SessionLocal
 
@@ -15,6 +16,7 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
+def require_admin(request: Request, x_admin_token: Optional[str] = Header(None)) -> None:
+    enforce_rate_limit(request, scope="admin-auth", limit=30, window_seconds=60)
     if not settings.ADMIN_TOKEN or x_admin_token != settings.ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid admin token")

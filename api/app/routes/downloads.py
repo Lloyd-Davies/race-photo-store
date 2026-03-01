@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from app.rate_limit import enforce_rate_limit
 from photostore.config import settings
 from photostore.models import Delivery
 
@@ -13,7 +14,9 @@ router = APIRouter(tags=["downloads"])
 
 
 @router.get("/d/{token}")
-def download(token: str, db: Session = Depends(get_db)) -> Response:
+def download(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
+    enforce_rate_limit(request, scope="download", limit=90, window_seconds=60)
+
     delivery = db.query(Delivery).filter(Delivery.token == token).first()
 
     if not delivery:

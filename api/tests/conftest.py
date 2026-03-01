@@ -216,3 +216,12 @@ def mock_celery_send_task():
     """Always mock celery send_task so tests never enqueue real jobs."""
     with patch("photostore.celery_app.celery_app.send_task") as m:
         yield m
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter_state():
+    from app.rate_limit import reset_rate_limits
+
+    reset_rate_limits()
+    yield
+    reset_rate_limits()

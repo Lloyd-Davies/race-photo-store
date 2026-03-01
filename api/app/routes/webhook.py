@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from app.rate_limit import enforce_rate_limit
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.models import Order, OrderStatus
@@ -21,6 +22,8 @@ async def stripe_webhook(
     stripe_signature: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> dict:
+    enforce_rate_limit(request, scope="stripe-webhook", limit=60, window_seconds=60)
+
     if not settings.STRIPE_WEBHOOK_SECRET:
         raise HTTPException(503, "Stripe is not configured on this server")
 
