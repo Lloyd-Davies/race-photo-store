@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     ADMIN_REFRESH_TTL_HOURS: int = 12
     EVENT_ACCESS_TTL_HOURS: int = 12
     ORDER_ACCESS_TTL_HOURS: int = 720
-    MAX_PHOTO_UPLOAD_BYTES: int = 25 * 1024 * 1024
+    MAX_PHOTO_UPLOAD_BYTES: int = 100 * 1024 * 1024
     CELERY_CONCURRENCY: int = 2
     UVICORN_WORKERS: int = 2
 
