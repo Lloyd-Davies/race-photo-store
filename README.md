@@ -50,7 +50,14 @@ docker-compose.yml
 | STRIPE_WEBHOOK_SECRET | Stripe webhook signing secret |
 | STRIPE_PRICE_ID | Stripe Price ID for one photo |
 | PUBLIC_BASE_URL | Public site URL (for links) |
-| ADMIN_TOKEN | Admin API token |
+| ADMIN_TOKEN | Base admin credential used at login |
+| ADMIN_SESSION_SECRET | Signing secret for admin access/refresh tokens |
+| ADMIN_SESSION_TTL_MINUTES | Admin access token TTL in minutes |
+| ADMIN_REFRESH_TTL_HOURS | Admin refresh token TTL in hours |
+| EVENT_ACCESS_SECRET | Signing secret for event/order access tokens |
+| EVENT_ACCESS_TTL_HOURS | Event access token TTL in hours |
+| ORDER_ACCESS_TTL_HOURS | Order access token TTL in hours |
+| MAX_PHOTO_UPLOAD_BYTES | Max bytes accepted by admin photo upload endpoint |
 | SITE_NAME | Frontend branding title |
 | SITE_TAGLINE | Frontend branding tagline |
 | CLOUDFLARE_TUNNEL_TOKEN | Cloudflare tunnel token used by `cloudflared` |
@@ -132,6 +139,8 @@ sudo chown -R $USER:$USER /mnt/pstore
   - `GET /d/{token}`
 - Admin:
   - `POST /api/admin/events`
+    - `POST /api/admin/login`
+    - `POST /api/admin/refresh`
   - `PATCH /api/admin/events/{id}`
   - `POST /api/admin/events/{id}/ingest`
   - `POST /api/admin/events/{id}/tags/bibs`
