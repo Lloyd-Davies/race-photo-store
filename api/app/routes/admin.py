@@ -444,8 +444,13 @@ def upload_photo(
                 chunk = file.file.read(262144)
                 if not chunk:
                     break
-                tmp.write(chunk)
                 size_bytes += len(chunk)
+                if size_bytes > settings.MAX_PHOTO_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Uploaded file exceeds max size ({settings.MAX_PHOTO_UPLOAD_BYTES} bytes)",
+                    )
+                tmp.write(chunk)
         Path(tmp.name).replace(dest_path)
     except Exception:
         Path(tmp.name).unlink(missing_ok=True)

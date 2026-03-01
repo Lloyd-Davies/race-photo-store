@@ -550,6 +550,23 @@ def test_upload_photo_cross_event_collision(admin_client, db_session, test_event
     assert "different event" in resp.json()["detail"]
 
 
+def test_upload_photo_rejects_oversized_file(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    monkeypatch.setattr(settings, "MAX_PHOTO_UPLOAD_BYTES", 8)
+
+    resp = _upload(admin_client, test_event.id, "too_big_001", "proof", data=b"0123456789")
+    assert resp.status_code == 413
+    assert "exceeds max size" in resp.json()["detail"]
+
+    photo = db_session.query(Photo).filter(Photo.id == "too_big_001").first()
+    assert photo is None
+    assert not (storage / "proofs" / test_event.slug / "too_big_001.jpg").exists()
+
+
 # ── Bib tag replace flag ──────────────────────────────────────────────────────
 
 def test_upload_bib_tags_replace_clears_existing(admin_client, db_session, test_event, test_photos):
