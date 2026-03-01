@@ -19,6 +19,8 @@ class EventOut(BaseModel):
     date: datetime
     location: Optional[str] = None
     status: EventStatus
+    is_password_protected: bool = False
+    access_hint: Optional[str] = None
     public_until: Optional[datetime] = None
     archive_after: Optional[datetime] = None
 
@@ -96,6 +98,9 @@ class CreateEventRequest(BaseModel):
     name: str
     date: datetime
     location: Optional[str] = None
+    is_password_protected: bool = False
+    access_password: Optional[str] = None
+    access_hint: Optional[str] = None
 
 
 class UpdateEventRequest(BaseModel):
@@ -103,8 +108,21 @@ class UpdateEventRequest(BaseModel):
     date: Optional[datetime] = None
     location: Optional[str] = None
     status: Optional[EventStatus] = None
+    is_password_protected: Optional[bool] = None
+    access_password: Optional[str] = None
+    clear_access_password: Optional[bool] = None
+    access_hint: Optional[str] = None
     public_until: Optional[datetime] = None
     archive_after: Optional[datetime] = None
+
+
+class EventUnlockRequest(BaseModel):
+    password: str
+
+
+class EventUnlockOut(BaseModel):
+    access_token: str
+    expires_at: datetime
 
 
 class EventCreatedOut(BaseModel):

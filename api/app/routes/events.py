@@ -2,12 +2,13 @@ import math
 from datetime import datetime, time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import cast, Time
 
 from app.deps import get_db
-from app.schemas import EventOut, PhotoListOut, PhotoOut
+from app.event_access import create_event_access_token, verify_event_access_token, verify_event_password
+from app.schemas import EventOut, EventUnlockOut, EventUnlockRequest, PhotoListOut, PhotoOut
 from photostore.models import Event, Photo, PhotoTag
 
 router = APIRouter(prefix="/api", tags=["events"])
@@ -26,8 +27,16 @@ def list_photos(
     start_time: Optional[str] = Query(None, description="Filter captured_at >= HH:MM"),
     end_time: Optional[str] = Query(None, description="Filter captured_at <= HH:MM"),
     page_size: int = Query(50, ge=1, le=200),
+    x_event_access: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> PhotoListOut:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        return PhotoListOut(photos=[], total=0, page=page, pages=1)
+
+    if event.is_password_protected and not verify_event_access_token(x_event_access, event_id):
+        raise HTTPException(401, "Event is locked. Unlock required.")
+
     q = db.query(Photo).filter(Photo.event_id == event_id)
 
     if bib is not None:
@@ -70,3 +79,23 @@ def list_photos(
         page=page,
         pages=max(1, math.ceil(total / page_size)),
     )
+
+
+@router.post("/events/{event_id}/unlock", response_model=EventUnlockOut)
+def unlock_event(
+    event_id: int,
+    req: EventUnlockRequest,
+    db: Session = Depends(get_db),
+) -> EventUnlockOut:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    if not event.is_password_protected:
+        raise HTTPException(400, "Event is not password protected")
+
+    if not verify_event_password(req.password, event.access_password_hash):
+        raise HTTPException(401, "Invalid event password")
+
+    token, expires_at = create_event_access_token(event.id)
+    return EventUnlockOut(access_token=token, expires_at=expires_at)

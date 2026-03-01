@@ -76,3 +76,71 @@ def test_list_photos_time_filter(client, db_session, test_event, test_photos):
 def test_list_photos_time_filter_invalid_format(client, test_event, test_photos):
     resp = client.get(f"/api/events/{test_event.id}/photos?start_time=9am")
     assert resp.status_code == 400
+
+
+def test_list_photos_locked_requires_unlock(client, db_session):
+    from datetime import datetime, timezone
+
+    from app.event_access import hash_event_password
+    from photostore.models import Event, Photo
+
+    event = Event(
+        slug="locked-event",
+        name="Locked Event",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        is_password_protected=True,
+        access_password_hash=hash_event_password("secret123"),
+        access_hint="Team name",
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="locked-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/locked-001.jpg",
+        original_path=f"originals/{event.slug}/locked-001.jpg",
+    ))
+    db_session.flush()
+
+    resp = client.get(f"/api/events/{event.id}/photos")
+    assert resp.status_code == 401
+
+
+def test_unlock_event_and_list_photos(client, db_session):
+    from datetime import datetime, timezone
+
+    from app.event_access import hash_event_password
+    from photostore.models import Event, Photo
+
+    event = Event(
+        slug="locked-event-2",
+        name="Locked Event 2",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        is_password_protected=True,
+        access_password_hash=hash_event_password("secret123"),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="locked-002",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/locked-002.jpg",
+        original_path=f"originals/{event.slug}/locked-002.jpg",
+    ))
+    db_session.flush()
+
+    bad = client.post(f"/api/events/{event.id}/unlock", json={"password": "wrong"})
+    assert bad.status_code == 401
+
+    unlock = client.post(f"/api/events/{event.id}/unlock", json={"password": "secret123"})
+    assert unlock.status_code == 200
+    token = unlock.json()["access_token"]
+
+    resp = client.get(
+        f"/api/events/{event.id}/photos",
+        headers={"X-Event-Access": token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1

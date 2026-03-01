@@ -11,3 +11,16 @@ export interface AdminStats {
 }
 
 export const fetchAdminStats = () => apiGet<AdminStats>('/admin/stats')
+
+export async function verifyAdminSession(token: string): Promise<void> {
+  const res = await fetch('/api/admin/session', {
+    method: 'GET',
+    headers: {
+      'X-Admin-Token': token,
+    },
+  })
+
+  if (!res.ok) {
+    throw new Error('Invalid admin token')
+  }
+}

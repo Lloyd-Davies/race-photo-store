@@ -25,13 +25,6 @@ export default function Layout() {
           </Link>
 
           <nav className="flex items-center gap-4">
-            <Link
-              to="/admin/events"
-              className="text-sm text-content-muted hover:text-content transition-colors"
-            >
-              Admin
-            </Link>
-
             <button
               onClick={() => setDrawerOpen(true)}
               className="relative flex items-center gap-1.5 text-sm text-content-muted hover:text-sky-500 transition-colors"
@@ -57,7 +50,13 @@ export default function Layout() {
 
       {/* Footer */}
       <footer className="border-t border-surface-700 py-6 text-center text-sm text-content-muted">
-        {site_name} &copy; {new Date().getFullYear()}
+        <div className="flex items-center justify-center gap-3">
+          <span>{site_name} &copy; {new Date().getFullYear()}</span>
+          <span className="text-surface-600">•</span>
+          <Link to="/admin/events" className="hover:text-content transition-colors">
+            Login
+          </Link>
+        </div>
       </footer>
 
       {/* Cart drawer */}

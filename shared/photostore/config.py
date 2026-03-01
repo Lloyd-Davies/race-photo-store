@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ID: str = ""
     PUBLIC_BASE_URL: str = ""
     ADMIN_TOKEN: str = ""
+    EVENT_ACCESS_SECRET: str = ""
+    EVENT_ACCESS_TTL_HOURS: int = 12
     CELERY_CONCURRENCY: int = 2
     UVICORN_WORKERS: int = 2
 

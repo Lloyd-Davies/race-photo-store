@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Enum,
@@ -64,6 +65,9 @@ class Event(Base):
     date = Column(DateTime(timezone=True), nullable=False)
     location = Column(String)
     status = Column(Enum(EventStatus), nullable=False, default=EventStatus.ACTIVE)
+    is_password_protected = Column(Boolean, nullable=False, default=False)
+    access_password_hash = Column(String)
+    access_hint = Column(String)
     public_until = Column(DateTime(timezone=True))
     archive_after = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)

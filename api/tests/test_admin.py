@@ -34,6 +34,48 @@ def test_create_event_requires_admin_token(client):
     assert resp.status_code == 401
 
 
+def test_create_protected_event_requires_password(admin_client):
+    resp = admin_client.post("/api/admin/events", json={
+        "slug": "locked-without-password",
+        "name": "Locked Event",
+        "date": "2026-03-01T09:00:00Z",
+        "is_password_protected": True,
+    })
+    assert resp.status_code == 400
+
+
+def test_create_protected_event_sets_password_hash(admin_client, db_session):
+    from photostore.models import Event
+
+    resp = admin_client.post("/api/admin/events", json={
+        "slug": "locked-with-password",
+        "name": "Locked Event",
+        "date": "2026-03-01T09:00:00Z",
+        "is_password_protected": True,
+        "access_password": "secret123",
+        "access_hint": "Club code",
+    })
+    assert resp.status_code == 200
+
+    created_id = resp.json()["id"]
+    event = db_session.query(Event).filter(Event.id == created_id).first()
+    assert event is not None
+    assert event.is_password_protected is True
+    assert event.access_password_hash is not None
+    assert event.access_hint == "Club code"
+
+
+def test_admin_session_valid(admin_client):
+    resp = admin_client.get("/api/admin/session")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+def test_admin_session_requires_admin_token(client):
+    resp = client.get("/api/admin/session")
+    assert resp.status_code == 401
+
+
 # ── Ingest ────────────────────────────────────────────────────────────────────
 
 def test_ingest_photos(admin_client, test_event, tmp_path, monkeypatch):
@@ -125,6 +167,14 @@ def test_update_event_fields(admin_client, db_session, test_event):
     assert refreshed.name == "Updated Name"
     assert refreshed.location == "Updated Location"
     assert refreshed.status.value == "ARCHIVED"
+
+
+def test_update_event_protection_requires_password(admin_client, test_event):
+    resp = admin_client.patch(
+        f"/api/admin/events/{test_event.id}",
+        json={"is_password_protected": True},
+    )
+    assert resp.status_code == 400
 
 
 # ── Bib tags ──────────────────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Search, ShoppingCart, X } from 'lucide-react'
-import { fetchPhotos, fetchEvents } from '../api/events'
+import { ArrowLeft, Lock, Search, ShoppingCart, X } from 'lucide-react'
+import { fetchPhotos, fetchEvents, unlockEvent } from '../api/events'
 import { useCartStore } from '../store/cart'
 import PhotoCard from '../components/PhotoCard'
 import { PhotoSkeleton } from '../components/Skeleton'
@@ -20,6 +20,10 @@ export default function EventGallery() {
   const [startTime, setStartTime] = useState<string | undefined>()
   const [endTime, setEndTime] = useState<string | undefined>()
   const [activePhoto, setActivePhoto] = useState<Photo | null>(null)
+  const [eventAccessToken, setEventAccessToken] = useState<string | null>(null)
+  const [unlockPassword, setUnlockPassword] = useState('')
+  const [unlockError, setUnlockError] = useState<string | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
   const cartCount = useCartStore((s) => s.items.length)
 
   const { data: events } = useQuery({
@@ -28,13 +32,55 @@ export default function EventGallery() {
   })
 
   const event = events?.find((e) => e.id === id)
+  const isEventLocked = !!event?.is_password_protected
+
+  const eventAccessKey = useMemo(() => `eventAccess:${id}`, [id])
+
+  useEffect(() => {
+    if (isNaN(id)) {
+      setEventAccessToken(null)
+      return
+    }
+    const token = sessionStorage.getItem(eventAccessKey)
+    setEventAccessToken(token)
+  }, [eventAccessKey, id])
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['photos', id, page, bib, startTime, endTime],
-    queryFn: () => fetchPhotos(id, page, bib, startTime, endTime),
-    enabled: !isNaN(id),
+    queryKey: ['photos', id, page, bib, startTime, endTime, eventAccessToken],
+    queryFn: () => fetchPhotos(id, page, bib, startTime, endTime, eventAccessToken ?? undefined),
+    enabled: !isNaN(id) && events !== undefined && (!isEventLocked || !!eventAccessToken),
     placeholderData: (prev) => prev,
   })
+
+  useEffect(() => {
+    if (!isEventLocked || !error) return
+    const message = error instanceof Error ? error.message : ''
+    if (!message.startsWith('401:')) return
+    sessionStorage.removeItem(eventAccessKey)
+    setEventAccessToken(null)
+    setUnlockError('Access expired. Please enter the event password again.')
+  }, [error, eventAccessKey, isEventLocked])
+
+  async function handleUnlock(e: React.FormEvent) {
+    e.preventDefault()
+    if (!unlockPassword.trim()) {
+      setUnlockError('Please enter the event password.')
+      return
+    }
+
+    setUnlocking(true)
+    setUnlockError(null)
+    try {
+      const unlocked = await unlockEvent(id, unlockPassword.trim())
+      sessionStorage.setItem(eventAccessKey, unlocked.access_token)
+      setEventAccessToken(unlocked.access_token)
+      setUnlockPassword('')
+    } catch {
+      setUnlockError('Invalid event password.')
+    } finally {
+      setUnlocking(false)
+    }
+  }
 
   function handleBibSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -130,6 +176,31 @@ export default function EventGallery() {
       </div>
 
       {/* Gallery */}
+      {isEventLocked && !eventAccessToken && (
+        <div className="max-w-md mx-auto bg-surface-900 border border-surface-700 rounded-xl p-6 mb-6">
+          <div className="flex items-center gap-2 mb-2 text-content">
+            <Lock size={16} className="text-sky-500" />
+            <h2 className="font-semibold">This event is password protected</h2>
+          </div>
+          {event?.access_hint && (
+            <p className="text-sm text-content-muted mb-3">Hint: {event.access_hint}</p>
+          )}
+          <form onSubmit={handleUnlock} className="space-y-3">
+            <input
+              type="password"
+              value={unlockPassword}
+              onChange={(e) => setUnlockPassword(e.target.value)}
+              placeholder="Event password"
+              className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
+            />
+            {unlockError && <p className="text-xs text-red-400">{unlockError}</p>}
+            <Button type="submit" size="sm" loading={unlocking}>
+              Unlock event
+            </Button>
+          </form>
+        </div>
+      )}
+
       {isLoading && <PhotoSkeleton />}
       {error && (
         <p className="text-red-400 text-sm text-center py-12">Failed to load photos.</p>

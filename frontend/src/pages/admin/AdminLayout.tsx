@@ -3,7 +3,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarDays, LogOut, ShieldAlert, ReceiptText } from 'lucide-react'
 import Button from '../../components/Button'
-import { fetchAdminStats } from '../../api/adminStats'
+import { fetchAdminStats, verifyAdminSession } from '../../api/adminStats'
 import { Skeleton } from '../../components/Skeleton'
 
 const ADMIN_TOKEN_KEY = 'adminToken'
@@ -11,10 +11,12 @@ const ADMIN_TOKEN_KEY = 'adminToken'
 export default function AdminLayout() {
   const [authed, setAuthed] = useState(false)
   const [input, setInput] = useState('')
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [loadingLogin, setLoadingLogin] = useState(false)
+  const [checkingStoredToken, setCheckingStoredToken] = useState(true)
   const navigate = useNavigate()
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: fetchAdminStats,
     enabled: authed,
@@ -22,26 +24,75 @@ export default function AdminLayout() {
   })
 
   useEffect(() => {
-    if (sessionStorage.getItem(ADMIN_TOKEN_KEY)) {
-      setAuthed(true)
+    const token = sessionStorage.getItem(ADMIN_TOKEN_KEY)
+    if (!token) {
+      setCheckingStoredToken(false)
+      return
     }
+
+    verifyAdminSession(token)
+      .then(() => {
+        setAuthed(true)
+      })
+      .catch(() => {
+        sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+        setAuthed(false)
+        setError('Your admin session has expired. Please sign in again.')
+      })
+      .finally(() => {
+        setCheckingStoredToken(false)
+      })
   }, [])
 
-  function handleLogin(e: React.FormEvent) {
+  useEffect(() => {
+    if (!statsError) return
+    const msg = statsError instanceof Error ? statsError.message : ''
+    if (!msg.startsWith('401:')) return
+
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+    setAuthed(false)
+    setError('Your admin session is no longer valid. Please sign in again.')
+  }, [statsError])
+
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
-    if (input.trim()) {
-      sessionStorage.setItem(ADMIN_TOKEN_KEY, input.trim())
+    const token = input.trim()
+    if (!token) {
+      setError('Please enter a token.')
+      return
+    }
+
+    setLoadingLogin(true)
+    setError(null)
+    try {
+      await verifyAdminSession(token)
+      sessionStorage.setItem(ADMIN_TOKEN_KEY, token)
       setAuthed(true)
-      setError(false)
-    } else {
-      setError(true)
+      setInput('')
+    } catch {
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+      setAuthed(false)
+      setError('Invalid admin token.')
+    } finally {
+      setLoadingLogin(false)
     }
   }
 
   function handleLogout() {
     sessionStorage.removeItem(ADMIN_TOKEN_KEY)
     setAuthed(false)
+    setError(null)
     navigate('/admin/events')
+  }
+
+  if (checkingStoredToken) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center px-4">
+        <div className="bg-surface-900 border border-surface-700 rounded-2xl p-8 w-full max-w-sm text-center">
+          <p className="text-sm text-content-muted">Checking admin session…</p>
+        </div>
+      </div>
+    )
   }
 
   if (!authed) {
@@ -62,9 +113,9 @@ export default function AdminLayout() {
               className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
             />
             {error && (
-              <p className="text-xs text-red-400">Please enter a token.</p>
+              <p className="text-xs text-red-400">{error}</p>
             )}
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" loading={loadingLogin}>
               Sign in
             </Button>
           </form>

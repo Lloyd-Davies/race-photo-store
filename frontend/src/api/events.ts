@@ -7,6 +7,8 @@ export interface Event {
   date: string
   location?: string
   status: 'ACTIVE' | 'ARCHIVED'
+  is_password_protected: boolean
+  access_hint?: string
   public_until?: string
   archive_after?: string
 }
@@ -22,6 +24,11 @@ export interface PhotoListResponse {
   total: number
   page: number
   pages: number
+}
+
+export interface EventUnlockResponse {
+  access_token: string
+  expires_at: string
 }
 
 export interface EventCreatedOut {
@@ -54,15 +61,30 @@ export const fetchPhotos = (
   bib?: string,
   startTime?: string,
   endTime?: string,
+  eventAccessToken?: string,
 ) => {
   const params = new URLSearchParams({ page: String(page), page_size: '60' })
   if (bib) params.set('bib', bib)
   if (startTime) params.set('start_time', startTime)
   if (endTime) params.set('end_time', endTime)
-  return apiGet<PhotoListResponse>(`/events/${eventId}/photos?${params}`)
+  const headers: HeadersInit | undefined = eventAccessToken
+    ? { 'X-Event-Access': eventAccessToken }
+    : undefined
+  return apiGet<PhotoListResponse>(`/events/${eventId}/photos?${params}`, headers)
 }
 
-export const createEvent = (body: { slug: string; name: string; date: string; location?: string }) =>
+export const unlockEvent = (eventId: number, password: string) =>
+  apiPost<EventUnlockResponse>(`/events/${eventId}/unlock`, { password })
+
+export const createEvent = (body: {
+  slug: string
+  name: string
+  date: string
+  location?: string
+  is_password_protected?: boolean
+  access_password?: string
+  access_hint?: string
+}) =>
   apiPost<EventCreatedOut>('/admin/events', body)
 
 export const updateEvent = (
@@ -74,6 +96,10 @@ export const updateEvent = (
     status?: 'ACTIVE' | 'ARCHIVED'
     public_until?: string | null
     archive_after?: string | null
+    is_password_protected?: boolean
+    access_password?: string
+    clear_access_password?: boolean
+    access_hint?: string | null
   }
 ) => apiPatch<EventCreatedOut>(`/admin/events/${eventId}`, body)
 

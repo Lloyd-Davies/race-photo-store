@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy import func
 
 from app.deps import get_db, require_admin
+from app.event_access import hash_event_password
 from app.schemas import (
     AdminStatsOut,
     AdminOrderListOut,
@@ -93,6 +94,11 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
     )
 
 
+@router.get("/session", dependencies=[Depends(require_admin)])
+def verify_admin_session() -> dict:
+    return {"ok": True}
+
+
 @router.get("/events", response_model=list[EventCreatedOut], dependencies=[Depends(require_admin)])
 def list_admin_events(db: Session = Depends(get_db)) -> list[EventCreatedOut]:
     """Return all events regardless of status (admin view), newest first by ID."""
@@ -105,11 +111,17 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
     if db.query(Event).filter(Event.slug == req.slug).first():
         raise HTTPException(409, f"Event slug '{req.slug}' already exists")
 
+    if req.is_password_protected and not (req.access_password and req.access_password.strip()):
+        raise HTTPException(400, "Protected events require an access password")
+
     event = Event(
         slug=req.slug,
         name=req.name,
         date=req.date,
         location=req.location,
+        is_password_protected=req.is_password_protected,
+        access_password_hash=(hash_event_password(req.access_password.strip()) if req.is_password_protected and req.access_password else None),
+        access_hint=(req.access_hint if req.is_password_protected else None),
     )
     db.add(event)
     db.commit()
@@ -132,8 +144,27 @@ def update_event(
     if not payload:
         raise HTTPException(400, "No fields supplied")
 
+    access_password = payload.pop("access_password", None)
+    clear_access_password = payload.pop("clear_access_password", False)
+
     for field, value in payload.items():
         setattr(event, field, value)
+
+    if clear_access_password:
+        event.access_password_hash = None
+
+    if access_password is not None:
+        access_password = access_password.strip()
+        if not access_password:
+            raise HTTPException(400, "access_password must not be empty")
+        event.access_password_hash = hash_event_password(access_password)
+
+    if event.is_password_protected and not event.access_password_hash:
+        raise HTTPException(400, "Protected events require an access password")
+
+    if not event.is_password_protected:
+        event.access_password_hash = None
+        event.access_hint = None
 
     db.commit()
     db.refresh(event)

@@ -15,14 +15,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: getHeaders(init?.headers),
   })
+
   if (!res.ok) {
-    const msg = await res.text().catch(() => res.statusText)
-    throw new Error(`${res.status}: ${msg}`)
+    let detail = res.statusText
+
+    try {
+      const body = await res.json()
+      if (typeof body?.detail === 'string' && body.detail.trim()) {
+        detail = body.detail
+      }
+    } catch {
+      const text = await res.text().catch(() => '')
+      if (text.trim()) {
+        detail = text.trim()
+      }
+    }
+
+    if (res.status === 401 && (!detail || detail === 'Unauthorized')) {
+      detail = 'Unauthorized'
+    }
+
+    throw new Error(`${res.status}: ${detail}`)
   }
+
   return res.json() as Promise<T>
 }
 
-export const apiGet = <T>(path: string) => request<T>(path)
+export const apiGet = <T>(path: string, headers?: HeadersInit) =>
+  request<T>(path, { headers })
 
 export const apiPost = <T>(path: string, body?: unknown) =>
   request<T>(path, {
