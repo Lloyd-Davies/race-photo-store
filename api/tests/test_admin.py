@@ -514,6 +514,8 @@ def test_upload_photo_invalid_photo_id(admin_client, test_event):
 
 
 def test_upload_photo_proof_creates_record(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    import os
+
     from photostore.config import settings
     from photostore.models import Photo
 
@@ -531,7 +533,12 @@ def test_upload_photo_proof_creates_record(admin_client, db_session, test_event,
     photo = db_session.query(Photo).filter(Photo.id == "img_001").first()
     assert photo is not None
     assert photo.proof_path == f"proofs/{test_event.slug}/img_001.jpg"
-    assert (storage / "proofs" / test_event.slug / "img_001.jpg").exists()
+    proof_path = storage / "proofs" / test_event.slug / "img_001.jpg"
+    assert proof_path.exists()
+
+    if os.name != "nt":
+        mode = proof_path.stat().st_mode & 0o777
+        assert mode == 0o644
 
 
 def test_upload_photo_original_creates_record(admin_client, db_session, test_event, tmp_path, monkeypatch):

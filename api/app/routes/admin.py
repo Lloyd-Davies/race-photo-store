@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import hmac
+import os
 import re
 import tempfile
 import uuid
@@ -505,6 +506,7 @@ def upload_photo(
                     )
                 tmp.write(chunk)
         Path(tmp.name).replace(dest_path)
+        os.chmod(dest_path, 0o644)
     except Exception:
         Path(tmp.name).unlink(missing_ok=True)
         raise
