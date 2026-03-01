@@ -12,7 +12,7 @@ interface CreateForm {
   date: string
   location: string
   is_password_protected: boolean
-  access_password: string
+  access_secret: string
   access_hint: string
 }
 
@@ -22,7 +22,7 @@ const EMPTY_FORM: CreateForm = {
   date: '',
   location: '',
   is_password_protected: false,
-  access_password: '',
+  access_secret: '',
   access_hint: '',
 }
 
@@ -33,8 +33,8 @@ interface EditForm {
   status: Event['status']
   is_password_protected: boolean
   access_hint: string
-  access_password: string
-  clear_access_password: boolean
+  access_secret: string
+  clear_access_secret: boolean
 }
 
 function slugify(v: string) {
@@ -69,7 +69,7 @@ export default function AdminEvents() {
         date: form.date,
         location: form.location || undefined,
         is_password_protected: form.is_password_protected,
-        access_password: form.is_password_protected ? form.access_password || undefined : undefined,
+        access_secret: form.is_password_protected ? form.access_secret || undefined : undefined,
         access_hint: form.is_password_protected ? form.access_hint || undefined : undefined,
       }),
     onSuccess: () => {
@@ -88,8 +88,8 @@ export default function AdminEvents() {
         status: body.status,
         is_password_protected: body.is_password_protected,
         access_hint: body.is_password_protected ? body.access_hint || undefined : null,
-        access_password: body.access_password || undefined,
-        clear_access_password: body.clear_access_password || undefined,
+        access_secret: body.access_secret || undefined,
+        clear_access_secret: body.clear_access_secret || undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] })
@@ -146,7 +146,7 @@ export default function AdminEvents() {
     deleteMut.mutate({ eventId: deleteTarget.id, opts: { deleteFiles, force: forceConfirmed } })
   }
 
-  function handleField(field: 'slug' | 'name' | 'date' | 'location' | 'access_password' | 'access_hint', value: string) {
+  function handleField(field: 'slug' | 'name' | 'date' | 'location' | 'access_secret' | 'access_hint', value: string) {
     setForm((prev) => {
       const next = { ...prev, [field]: value }
       // Auto-fill slug from name
@@ -164,8 +164,8 @@ export default function AdminEvents() {
     if (!form.slug) errs.slug = 'Required'
     if (!form.name) errs.name = 'Required'
     if (!form.date) errs.date = 'Required'
-    if (form.is_password_protected && !form.access_password.trim()) {
-      errs.access_password = 'Required for protected events'
+    if (form.is_password_protected && !form.access_secret.trim()) {
+      errs.access_secret = 'Required for protected events'
     }
     if (Object.keys(errs).length) { setErrors(errs); return }
     createMut.mutate()
@@ -180,8 +180,8 @@ export default function AdminEvents() {
       status: event.status,
       is_password_protected: event.is_password_protected,
       access_hint: event.access_hint ?? '',
-      access_password: '',
-      clear_access_password: false,
+      access_secret: '',
+      clear_access_secret: false,
     })
   }
 
@@ -240,21 +240,21 @@ export default function AdminEvents() {
                 checked={form.is_password_protected}
                 onChange={(e) => setForm((prev) => ({ ...prev, is_password_protected: e.target.checked }))}
               />
-              Password protect this event
+              Protect this event with a secret
             </label>
 
             {form.is_password_protected && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Event password</label>
+                  <label className="block text-xs text-gray-400 mb-1">Event secret</label>
                   <input
                     type="password"
-                    value={form.access_password}
-                    onChange={(e) => handleField('access_password', e.target.value)}
+                    value={form.access_secret}
+                    onChange={(e) => handleField('access_secret', e.target.value)}
                     className="w-full bg-surface-900 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500"
                   />
-                  {errors.access_password && (
-                    <p className="text-xs text-red-400 mt-1">{errors.access_password}</p>
+                  {errors.access_secret && (
+                    <p className="text-xs text-red-400 mt-1">{errors.access_secret}</p>
                   )}
                 </div>
                 <div>
@@ -349,22 +349,22 @@ export default function AdminEvents() {
                         onChange={(e) => setEditForm((prev) => (prev ? {
                           ...prev,
                           is_password_protected: e.target.checked,
-                          clear_access_password: !e.target.checked,
+                          clear_access_secret: !e.target.checked,
                         } : prev))}
                       />
-                      Password protect event
+                      Protect event with secret
                     </label>
                     {editForm.is_password_protected && (
                       <>
                         <input
                           type="password"
-                          value={editForm.access_password}
+                          value={editForm.access_secret}
                           onChange={(e) => setEditForm((prev) => (prev ? {
                             ...prev,
-                            access_password: e.target.value,
-                            clear_access_password: false,
+                            access_secret: e.target.value,
+                            clear_access_secret: false,
                           } : prev))}
-                          placeholder="New password (optional)"
+                          placeholder="New secret (optional)"
                           className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2"
                         />
                         <input

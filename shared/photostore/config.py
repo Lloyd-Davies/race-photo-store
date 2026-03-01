@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     ADMIN_SESSION_SECRET: str = ""
     ADMIN_SESSION_TTL_MINUTES: int = 30
     ADMIN_REFRESH_TTL_HOURS: int = 12
-    EVENT_ACCESS_SECRET: str = ""
     EVENT_ACCESS_TTL_HOURS: int = 12
     ORDER_ACCESS_TTL_HOURS: int = 720
     MAX_PHOTO_UPLOAD_BYTES: int = 25 * 1024 * 1024

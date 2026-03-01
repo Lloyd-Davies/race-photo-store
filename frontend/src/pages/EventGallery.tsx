@@ -21,7 +21,7 @@ export default function EventGallery() {
   const [endTime, setEndTime] = useState<string | undefined>()
   const [activePhoto, setActivePhoto] = useState<Photo | null>(null)
   const [eventAccessToken, setEventAccessToken] = useState<string | null>(null)
-  const [unlockPassword, setUnlockPassword] = useState('')
+  const [unlockSecret, setUnlockSecret] = useState('')
   const [unlockError, setUnlockError] = useState<string | null>(null)
   const [unlocking, setUnlocking] = useState(false)
   const cartCount = useCartStore((s) => s.items.length)
@@ -58,25 +58,25 @@ export default function EventGallery() {
     if (!message.startsWith('401:')) return
     sessionStorage.removeItem(eventAccessKey)
     setEventAccessToken(null)
-    setUnlockError('Access expired. Please enter the event password again.')
+    setUnlockError('Access expired. Please enter the event secret again.')
   }, [error, eventAccessKey, isEventLocked])
 
   async function handleUnlock(e: React.FormEvent) {
     e.preventDefault()
-    if (!unlockPassword.trim()) {
-      setUnlockError('Please enter the event password.')
+    if (!unlockSecret.trim()) {
+      setUnlockError('Please enter the event secret.')
       return
     }
 
     setUnlocking(true)
     setUnlockError(null)
     try {
-      const unlocked = await unlockEvent(id, unlockPassword.trim())
+      const unlocked = await unlockEvent(id, unlockSecret.trim())
       sessionStorage.setItem(eventAccessKey, unlocked.access_token)
       setEventAccessToken(unlocked.access_token)
-      setUnlockPassword('')
+      setUnlockSecret('')
     } catch {
-      setUnlockError('Invalid event password.')
+      setUnlockError('Invalid event secret.')
     } finally {
       setUnlocking(false)
     }
@@ -180,7 +180,7 @@ export default function EventGallery() {
         <div className="max-w-md mx-auto bg-surface-900 border border-surface-700 rounded-xl p-6 mb-6">
           <div className="flex items-center gap-2 mb-2 text-content">
             <Lock size={16} className="text-sky-500" />
-            <h2 className="font-semibold">This event is password protected</h2>
+            <h2 className="font-semibold">This event is secret protected</h2>
           </div>
           {event?.access_hint && (
             <p className="text-sm text-content-muted mb-3">Hint: {event.access_hint}</p>
@@ -188,9 +188,9 @@ export default function EventGallery() {
           <form onSubmit={handleUnlock} className="space-y-3">
             <input
               type="password"
-              value={unlockPassword}
-              onChange={(e) => setUnlockPassword(e.target.value)}
-              placeholder="Event password"
+              value={unlockSecret}
+              onChange={(e) => setUnlockSecret(e.target.value)}
+              placeholder="Event secret"
               className="w-full bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
             />
             {unlockError && <p className="text-xs text-red-400">{unlockError}</p>}

@@ -160,8 +160,9 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
     if db.query(Event).filter(Event.slug == req.slug).first():
         raise HTTPException(409, f"Event slug '{req.slug}' already exists")
 
-    if req.is_password_protected and not (req.access_password and req.access_password.strip()):
-        raise HTTPException(400, "Protected events require an access password")
+    access_secret = (req.access_secret or req.access_password or "").strip()
+    if req.is_password_protected and not access_secret:
+        raise HTTPException(400, "Protected events require an access secret")
 
     event = Event(
         slug=req.slug,
@@ -169,7 +170,7 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
         date=req.date,
         location=req.location,
         is_password_protected=req.is_password_protected,
-        access_password_hash=(hash_event_password(req.access_password.strip()) if req.is_password_protected and req.access_password else None),
+        access_password_hash=(hash_event_password(access_secret) if req.is_password_protected and access_secret else None),
         access_hint=(req.access_hint if req.is_password_protected else None),
     )
     db.add(event)
@@ -193,23 +194,26 @@ def update_event(
     if not payload:
         raise HTTPException(400, "No fields supplied")
 
+    access_secret = payload.pop("access_secret", None)
     access_password = payload.pop("access_password", None)
+    clear_access_secret = payload.pop("clear_access_secret", False)
     clear_access_password = payload.pop("clear_access_password", False)
 
     for field, value in payload.items():
         setattr(event, field, value)
 
-    if clear_access_password:
+    if clear_access_secret or clear_access_password:
         event.access_password_hash = None
 
-    if access_password is not None:
-        access_password = access_password.strip()
-        if not access_password:
-            raise HTTPException(400, "access_password must not be empty")
-        event.access_password_hash = hash_event_password(access_password)
+    supplied_secret = access_secret if access_secret is not None else access_password
+    if supplied_secret is not None:
+        supplied_secret = supplied_secret.strip()
+        if not supplied_secret:
+            raise HTTPException(400, "access_secret must not be empty")
+        event.access_password_hash = hash_event_password(supplied_secret)
 
     if event.is_password_protected and not event.access_password_hash:
-        raise HTTPException(400, "Protected events require an access password")
+        raise HTTPException(400, "Protected events require an access secret")
 
     if not event.is_password_protected:
         event.access_password_hash = None

@@ -73,8 +73,8 @@ export const fetchPhotos = (
   return apiGet<PhotoListResponse>(`/events/${eventId}/photos?${params}`, headers)
 }
 
-export const unlockEvent = (eventId: number, password: string) =>
-  apiPost<EventUnlockResponse>(`/events/${eventId}/unlock`, { password })
+export const unlockEvent = (eventId: number, secret: string) =>
+  apiPost<EventUnlockResponse>(`/events/${eventId}/unlock`, { secret })
 
 export const createEvent = (body: {
   slug: string
@@ -82,7 +82,7 @@ export const createEvent = (body: {
   date: string
   location?: string
   is_password_protected?: boolean
-  access_password?: string
+  access_secret?: string
   access_hint?: string
 }) =>
   apiPost<EventCreatedOut>('/admin/events', body)
@@ -97,8 +97,8 @@ export const updateEvent = (
     public_until?: string | null
     archive_after?: string | null
     is_password_protected?: boolean
-    access_password?: string
-    clear_access_password?: boolean
+    access_secret?: string
+    clear_access_secret?: boolean
     access_hint?: string | null
   }
 ) => apiPatch<EventCreatedOut>(`/admin/events/${eventId}`, body)

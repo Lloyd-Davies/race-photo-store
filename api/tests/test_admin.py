@@ -65,6 +65,26 @@ def test_create_protected_event_sets_password_hash(admin_client, db_session):
     assert event.access_hint == "Club code"
 
 
+def test_create_protected_event_sets_secret_hash(admin_client, db_session):
+    from photostore.models import Event
+
+    resp = admin_client.post("/api/admin/events", json={
+        "slug": "locked-with-secret",
+        "name": "Locked Event Secret",
+        "date": "2026-03-01T09:00:00Z",
+        "is_password_protected": True,
+        "access_secret": "event-secret-123",
+        "access_hint": "Team code",
+    })
+    assert resp.status_code == 200
+
+    created_id = resp.json()["id"]
+    event = db_session.query(Event).filter(Event.id == created_id).first()
+    assert event is not None
+    assert event.is_password_protected is True
+    assert event.access_password_hash is not None
+
+
 def test_admin_session_valid(admin_client):
     resp = admin_client.get("/api/admin/session")
     assert resp.status_code == 200

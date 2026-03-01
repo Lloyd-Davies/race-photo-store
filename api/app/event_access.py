@@ -12,7 +12,7 @@ _PBKDF2_ITERATIONS = 240_000
 
 
 def _event_access_secret() -> str:
-    return settings.EVENT_ACCESS_SECRET or settings.ADMIN_TOKEN
+    return settings.ADMIN_SESSION_SECRET or settings.ADMIN_TOKEN
 
 
 def hash_event_password(password: str) -> str:
@@ -52,7 +52,7 @@ def verify_event_password(password: str, stored_hash: str | None) -> bool:
 def create_event_access_token(event_id: int) -> tuple[str, datetime]:
     secret = _event_access_secret()
     if not secret:
-        raise ValueError("EVENT_ACCESS_SECRET or ADMIN_TOKEN must be configured")
+        raise ValueError("ADMIN_SESSION_SECRET or ADMIN_TOKEN must be configured")
 
     expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.EVENT_ACCESS_TTL_HOURS)
     payload = {

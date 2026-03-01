@@ -124,8 +124,12 @@ def unlock_event(
     if not event.is_password_protected:
         raise HTTPException(400, "Event is not password protected")
 
-    if not verify_event_password(req.password, event.access_password_hash):
-        raise HTTPException(401, "Invalid event password")
+    access_secret = (req.secret or req.password or "").strip()
+    if not access_secret:
+        raise HTTPException(400, "Event secret is required")
+
+    if not verify_event_password(access_secret, event.access_password_hash):
+        raise HTTPException(401, "Invalid event secret")
 
     token, expires_at = create_event_access_token(event.id)
     return EventUnlockOut(access_token=token, expires_at=expires_at)

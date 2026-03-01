@@ -8,7 +8,7 @@ from photostore.config import settings
 
 
 def _admin_session_secret() -> str:
-    return settings.ADMIN_SESSION_SECRET or settings.EVENT_ACCESS_SECRET or settings.ADMIN_TOKEN
+    return settings.ADMIN_SESSION_SECRET or settings.ADMIN_TOKEN
 
 
 def _encode(payload: dict) -> str:

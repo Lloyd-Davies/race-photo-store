@@ -8,7 +8,7 @@ from photostore.config import settings
 
 
 def _order_access_secret() -> str:
-    return settings.EVENT_ACCESS_SECRET or settings.ADMIN_TOKEN
+    return settings.ADMIN_SESSION_SECRET or settings.ADMIN_TOKEN
 
 
 def create_order_access_token(order_id: int) -> tuple[str, datetime]:

@@ -208,7 +208,7 @@ def test_unlock_event_and_list_photos(client, db_session):
     bad = client.post(f"/api/events/{event.id}/unlock", json={"password": "wrong"})
     assert bad.status_code == 401
 
-    unlock = client.post(f"/api/events/{event.id}/unlock", json={"password": "secret123"})
+    unlock = client.post(f"/api/events/{event.id}/unlock", json={"secret": "secret123"})
     assert unlock.status_code == 200
     token = unlock.json()["access_token"]
 
@@ -300,7 +300,7 @@ def test_unlock_hidden_event_returns_not_found(client, db_session):
     db_session.add(event)
     db_session.flush()
 
-    resp = client.post(f"/api/events/{event.id}/unlock", json={"password": "secret123"})
+    resp = client.post(f"/api/events/{event.id}/unlock", json={"secret": "secret123"})
     assert resp.status_code == 404
 
 
