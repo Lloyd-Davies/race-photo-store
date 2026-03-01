@@ -159,14 +159,21 @@ def get_event_proof(
     if event.is_password_protected and not verify_event_access_token(provided_access, event_id):
         raise HTTPException(401, "Event is locked. Unlock required.")
 
-    proof_abs = Path(settings.STORAGE_ROOT) / photo.proof_path
+    proof_abs = (Path(settings.STORAGE_ROOT) / photo.proof_path).resolve()
+    proofs_root = (Path(settings.STORAGE_ROOT) / "proofs").resolve()
+
+    try:
+        proof_rel = proof_abs.relative_to(proofs_root)
+    except ValueError:
+        raise HTTPException(500, "Invalid proof image path")
+
     if not proof_abs.exists():
         raise HTTPException(404, "Proof image not found")
 
     return Response(
         status_code=200,
         headers={
-            "X-Accel-Redirect": f"/_internal_proofs/{event.slug}/{photo.id}.jpg",
+            "X-Accel-Redirect": f"/_internal_proofs/{proof_rel.as_posix()}",
             "Content-Type": "image/jpeg",
             "Cache-Control": "public, max-age=604800, immutable",
         },

@@ -282,6 +282,41 @@ def test_get_event_proof_locked_requires_token(client, db_session, tmp_path, mon
     assert unlocked_query.status_code == 200
 
 
+def test_get_event_proof_uses_stored_proof_path_for_accel_redirect(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="proof-path-event",
+        name="Proof Path Event",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    proof_rel = f"proofs/{event.slug}/subdir/custom-proof-name.jpeg"
+    db_session.add(Photo(
+        id="proof-path-001",
+        event_id=event.id,
+        proof_path=proof_rel,
+        original_path=f"originals/{event.slug}/proof-path-001.jpg",
+    ))
+    db_session.flush()
+
+    proof = storage / proof_rel
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    proof.write_bytes(b"FAKEJPEG")
+
+    resp = client.get(f"/api/events/{event.id}/photos/proof-path-001/proof")
+    assert resp.status_code == 200
+    assert resp.headers["X-Accel-Redirect"] == f"/_internal_proofs/{event.slug}/subdir/custom-proof-name.jpeg"
+
+
 def test_unlock_hidden_event_returns_not_found(client, db_session):
     from datetime import datetime, timedelta, timezone
 
