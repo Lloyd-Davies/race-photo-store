@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, model_validator
 
 from photostore.models import EventStatus, OrderStatus
 
@@ -68,6 +68,14 @@ class CartOut(BaseModel):
 
 class CheckoutRequest(BaseModel):
     cart_id: UUID
+    email: Optional[EmailStr] = None
+
+    @model_validator(mode="after")
+    def require_email_in_production(self) -> "CheckoutRequest":
+        from photostore.config import settings
+        if settings.ORDER_EMAIL_REQUIRED and not self.email:
+            raise ValueError("email is required")
+        return self
 
 
 class CheckoutOut(BaseModel):

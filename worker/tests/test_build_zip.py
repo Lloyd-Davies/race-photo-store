@@ -169,3 +169,39 @@ def test_build_zip_marks_order_failed_on_missing_original(db_session, tmp_path, 
 
     db_session.refresh(order)
     assert order.status == OrderStatus.FAILED
+
+
+# ---------------------------------------------------------------------------
+# Email trigger
+# ---------------------------------------------------------------------------
+
+def test_build_zip_queues_download_ready_email(db_session, tmp_path, monkeypatch):
+    """build_zip should enqueue a DOWNLOAD_READY send_email task after READY."""
+    from unittest.mock import patch
+
+    from photostore.config import settings
+    from photostore.models import Communication, CommunicationKind
+
+    bz_module = _get_bz_module()
+
+    storage = tmp_path / "photos"
+    order = _seed(db_session, storage)
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+
+    with patch.object(bz_module.celery_app, "send_task") as mock_send:
+        _get_build_zip_task().apply(args=[order.id])
+
+    comm = (
+        db_session.query(Communication)
+        .filter(Communication.order_id == order.id)
+        .filter(Communication.kind == CommunicationKind.DOWNLOAD_READY)
+        .first()
+    )
+    assert comm is not None, "Communication row was not created"
+
+    email_calls = [c for c in mock_send.call_args_list if "send_email" in str(c)]
+    assert len(email_calls) == 1
+    assert email_calls[0].kwargs["args"] == [comm.id]

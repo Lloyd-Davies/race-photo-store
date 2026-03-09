@@ -9,7 +9,9 @@ from app.deps import get_db
 from app.rate_limit import enforce_rate_limit
 from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import Order, OrderStatus
+from photostore.models import (
+    Communication, CommunicationKind, CommunicationStatus, Order, OrderStatus,
+)
 
 router = APIRouter(prefix="/api", tags=["stripe"])
 
@@ -70,3 +72,19 @@ def _handle_checkout_completed(session: dict, db: Session) -> None:
 
     # Dispatch the zip-building task to the worker
     celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+
+    if settings.EMAIL_ENABLED and order.email:
+        comm = Communication(
+            order_id=order.id,
+            kind=CommunicationKind.ORDER_CONFIRMED,
+            status=CommunicationStatus.QUEUED,
+            provider="brevo",
+            recipient_email=order.email,
+            subject="Your order is confirmed",
+            template_key="ORDER_CONFIRMED",
+            initiated_by="system",
+            dedupe_key=f"order_confirmed:{order.id}",
+        )
+        db.add(comm)
+        db.commit()
+        celery_app.send_task("tasks.send_email.send_email", args=[comm.id])

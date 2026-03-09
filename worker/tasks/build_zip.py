@@ -9,7 +9,10 @@ from pathlib import Path
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
-from photostore.models import Delivery, Order, OrderItem, OrderStatus, Photo
+from photostore.models import (
+    Communication, CommunicationKind, CommunicationStatus,
+    Delivery, Order, OrderItem, OrderStatus, Photo,
+)
 
 DOWNLOAD_TTL_DAYS = 30
 MAX_DOWNLOADS = 5
@@ -85,6 +88,22 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
 
         order.status = OrderStatus.READY
         db.commit()
+
+        if settings.EMAIL_ENABLED and order.email:
+            comm = Communication(
+                order_id=order_id,
+                kind=CommunicationKind.DOWNLOAD_READY,
+                status=CommunicationStatus.QUEUED,
+                provider="brevo",
+                recipient_email=order.email,
+                subject="Your photos are ready to download",
+                template_key="DOWNLOAD_READY",
+                initiated_by="system",
+                dedupe_key=f"download_ready:{order_id}",
+            )
+            db.add(comm)
+            db.commit()
+            celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
 
     except Exception as exc:
         # Mark order FAILED before retrying so the status is visible

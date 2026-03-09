@@ -47,7 +47,7 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     # real session ID is available a few lines below.
     order = Order(
         stripe_session_id=f"pending_{_uuid.uuid4()}",
-        email=cart.email or "",
+        email=req.email or cart.email or "",
         status=OrderStatus.PENDING,
     )
     db.add(order)
@@ -69,7 +69,7 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     session = stripe.checkout.Session.create(
         mode="payment",
         line_items=[{"price": settings.STRIPE_PRICE_ID, "quantity": count}],
-        customer_email=cart.email or None,
+        customer_email=req.email or cart.email or None,
         metadata={"cart_id": str(cart.id), "event_id": str(cart.event_id)},
         success_url=f"{settings.PUBLIC_BASE_URL}/orders/{order.id}?access_token={order_access_token}",
         cancel_url=f"{settings.PUBLIC_BASE_URL}/",

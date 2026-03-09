@@ -1,5 +1,5 @@
 import json
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import stripe
 
@@ -120,3 +120,86 @@ def test_webhook_idempotent(client, db_session, test_photos, mock_celery_send_ta
         client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
 
     assert mock_celery_send_task.call_count == 1
+
+
+def test_webhook_queues_order_confirmed_email(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
+    """After payment, an ORDER_CONFIRMED send_email task must be enqueued exactly once."""
+    from photostore.config import settings
+    from photostore.models import Communication, CommunicationKind, OrderStatus
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake")
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+
+    order = _make_order(db_session, test_photos)
+
+    event_payload = {
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "payment_intent": "pi_email_test",
+            "customer_email": "runner@example.com",
+        }},
+    }
+
+    with patch("stripe.Webhook.construct_event", return_value=event_payload):
+        resp = client.post(
+            "/api/stripe/webhook",
+            content=json.dumps(event_payload).encode(),
+            headers={"stripe-signature": "t=1,v1=fakesig"},
+        )
+
+    assert resp.status_code == 200
+
+    # A communication row should exist
+    comm = (
+        db_session.query(Communication)
+        .filter(Communication.order_id == order.id)
+        .filter(Communication.kind == CommunicationKind.ORDER_CONFIRMED)
+        .first()
+    )
+    assert comm is not None, "Communication row was not created"
+
+    # The send_email task should have been called with the communication id
+    send_email_calls = [
+        c for c in mock_celery_send_task.call_args_list
+        if c.args and c.args[0] == "tasks.send_email.send_email"
+    ]
+    assert len(send_email_calls) == 1
+    assert send_email_calls[0].kwargs["args"] == [comm.id]
+
+
+def test_webhook_duplicate_does_not_queue_second_email(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
+    """Second identical webhook must not enqueue a second ORDER_CONFIRMED email."""
+    from photostore.config import settings
+    from photostore.models import Communication
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake")
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+
+    order = _make_order(db_session, test_photos)
+
+    event_payload = {
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "payment_intent": "pi_dup_test",
+            "customer_email": "runner@example.com",
+        }},
+    }
+
+    with patch("stripe.Webhook.construct_event", return_value=event_payload):
+        client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
+        client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
+
+    send_email_calls = [
+        c for c in mock_celery_send_task.call_args_list
+        if c.args and c.args[0] == "tasks.send_email.send_email"
+    ]
+    assert len(send_email_calls) == 1
+
+    comm_count = (
+        db_session.query(Communication)
+        .filter(Communication.order_id == order.id)
+        .count()
+    )
+    assert comm_count == 1
