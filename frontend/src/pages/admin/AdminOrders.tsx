@@ -136,7 +136,7 @@ export default function AdminOrders() {
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex gap-2 overflow-x-auto pb-0.5 md:flex-wrap md:overflow-visible">
               {order.download_url && (
                 <>
                   <a href={order.download_url} target="_blank" rel="noreferrer">

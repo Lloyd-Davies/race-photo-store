@@ -85,7 +85,7 @@ function OrderActions({ order }: Props) {
   })
 
   return (
-    <div className="flex flex-wrap gap-2 mt-4">
+    <div className="flex gap-2 overflow-x-auto pb-0.5 mt-4 md:flex-wrap md:overflow-visible">
       {order.download_url && (
         <>
           <a href={order.download_url} target="_blank" rel="noreferrer">

@@ -69,4 +69,13 @@
     width: 100%;
     position: relative;
   }
+
+  /* iOS safe-area support for the fixed bottom admin nav */
+  .nav-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pb-nav-safe {
+    padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+  }
 }

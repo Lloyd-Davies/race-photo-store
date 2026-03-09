@@ -221,11 +221,11 @@ export default function AdminLayout() {
       </aside>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto px-4 pt-4 pb-24 md:px-8 md:pt-8 md:pb-8">
+      <main className="flex-1 overflow-y-auto px-4 pt-4 pb-nav-safe md:px-8 md:pt-8 md:pb-8">
         <div className="mb-6 bg-surface-900 border border-surface-700 rounded-xl p-4">
           <p className="text-xs uppercase tracking-wide text-content-muted mb-3">Admin snapshot</p>
           {statsLoading && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
               {Array.from({ length: 5 }).map((_, idx) => (
                 <Skeleton key={idx} className="h-14 rounded-lg" />
               ))}
@@ -233,7 +233,7 @@ export default function AdminLayout() {
           )}
 
           {!statsLoading && stats && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
               <div className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
                 <p className="text-[11px] text-content-muted">Events</p>
                 <p className="text-lg font-semibold text-content">{stats.total_events}</p>
@@ -261,7 +261,7 @@ export default function AdminLayout() {
       </main>
 
       {/* Mobile bottom nav — visible below md */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden bg-surface-900 border-t border-surface-700">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden bg-surface-900 border-t border-surface-700 nav-safe-bottom">
         <NavLink
           to="/admin/events"
           end
@@ -286,6 +286,7 @@ export default function AdminLayout() {
           Orders
         </NavLink>
         <button
+          type="button"
           onClick={handleLogout}
           className="flex flex-1 flex-col items-center justify-center gap-0.5 py-3 text-[11px] font-medium text-content-muted hover:text-red-400 transition-colors"
         >
