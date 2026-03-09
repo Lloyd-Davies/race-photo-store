@@ -25,5 +25,15 @@ class Settings(BaseSettings):
     SITE_NAME: str = "Race Photos"
     SITE_TAGLINE: str = "Your race, your photos."
 
+    # ── Email ─────────────────────────────────────────────────────────────────
+    EMAIL_ENABLED: bool = False
+    EMAIL_PROVIDER: str = "brevo"
+    BREVO_API_KEY: str = ""
+    EMAIL_FROM_ADDRESS: str = ""
+    EMAIL_FROM_NAME: str = ""
+    SUPPORT_EMAIL: str = ""
+    ORDER_EMAIL_REQUIRED: bool = True
+    BREVO_WEBHOOK_SECRET: str = ""
+
 
 settings = Settings()

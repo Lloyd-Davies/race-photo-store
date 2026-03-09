@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -16,6 +17,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+from .email_types import CommunicationKind, CommunicationStatus
 
 
 def utcnow() -> datetime:
@@ -128,6 +131,7 @@ class Order(Base):
 
     items = relationship("OrderItem", back_populates="order")
     delivery = relationship("Delivery", back_populates="order", uselist=False)
+    communications = relationship("Communication", back_populates="order")
 
 
 class OrderItem(Base):
@@ -157,3 +161,34 @@ class Delivery(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     order = relationship("Order", back_populates="delivery")
+
+
+class Communication(Base):
+    __tablename__ = "communications"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    kind = Column(Enum(CommunicationKind), nullable=False)
+    provider = Column(String, nullable=False)
+    recipient_email = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    template_key = Column(String, nullable=False)
+    body_text = Column(String, nullable=True)
+    body_html = Column(String, nullable=True)
+    provider_message_id = Column(String, nullable=True, index=True)
+    status = Column(Enum(CommunicationStatus), nullable=False, default=CommunicationStatus.QUEUED)
+    error_message = Column(String, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    provider_response_json = Column(JSON, nullable=True)
+    initiated_by = Column(String, nullable=True)
+    dedupe_key = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    order = relationship("Order", back_populates="communications")
+
+    __table_args__ = (
+        Index("ix_communications_order_id_kind", "order_id", "kind"),
+        # Partial unique index on dedupe_key (non-null only) — enforced via migration DDL
+    )

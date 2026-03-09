@@ -10,6 +10,10 @@ os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "")
 os.environ.setdefault("STRIPE_PRICE_ID", "")
 os.environ.setdefault("PUBLIC_BASE_URL", "http://testserver")
 os.environ.setdefault("ADMIN_TOKEN", "test-admin-token")
+os.environ.setdefault("EMAIL_ENABLED", "false")
+os.environ.setdefault("EMAIL_FROM_ADDRESS", "test@example.com")
+os.environ.setdefault("EMAIL_FROM_NAME", "Test Store")
+os.environ.setdefault("SUPPORT_EMAIL", "support@example.com")
 
 from testcontainers.postgres import PostgresContainer
 from sqlalchemy import create_engine, event
