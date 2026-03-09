@@ -690,3 +690,165 @@ def test_upload_bib_tags_replace_clears_existing(admin_client, db_session, test_
     tags = db_session.query(PhotoTag).filter(PhotoTag.photo_id == photo_id, PhotoTag.tag_type == "bib").all()
     assert len(tags) == 1
     assert tags[0].value == "new_bib"
+
+
+# ── Communication history + resend ───────────────────────────────────────────
+
+def _create_order_with_communication(db_session, test_photos, kind="ORDER_CONFIRMED"):
+    """Seed an order with one Communication row of the given kind."""
+    import uuid
+    from datetime import timedelta
+    from photostore.models import (
+        Communication, CommunicationKind, CommunicationStatus,
+        Delivery, Order, OrderItem, OrderStatus,
+    )
+
+    order = Order(
+        stripe_session_id=f"cs_test_comms_{kind}_{uuid.uuid4().hex[:6]}",
+        email="runner@example.com",
+        status=OrderStatus.READY,
+    )
+    db_session.add(order)
+    db_session.flush()
+
+    for photo in test_photos:
+        db_session.add(OrderItem(
+            order_id=order.id,
+            photo_id=photo.id,
+            unit_price_pence=500,
+        ))
+
+    db_session.add(Delivery(
+        order_id=order.id,
+        token=str(uuid.uuid4()),
+        zip_path=f"zips/order-{order.id}.zip",
+        event_slug=test_photos[0].event.slug,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+        max_downloads=5,
+        download_count=0,
+    ))
+
+    comm = Communication(
+        order_id=order.id,
+        kind=CommunicationKind(kind),
+        status=CommunicationStatus.SENT,
+        provider="brevo",
+        recipient_email=order.email,
+        subject="Your order is confirmed",
+        template_key=kind,
+        initiated_by="system",
+        dedupe_key=f"{kind.lower()}:{order.id}",
+    )
+    db_session.add(comm)
+    db_session.flush()
+    return order, comm
+
+
+def test_admin_list_communications_empty(admin_client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.get(f"/api/admin/orders/{order.id}/communications")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_admin_list_communications_returns_history(admin_client, db_session, test_photos):
+    order, comm = _create_order_with_communication(db_session, test_photos)
+
+    resp = admin_client.get(f"/api/admin/orders/{order.id}/communications")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["id"] == comm.id
+    assert data[0]["kind"] == "ORDER_CONFIRMED"
+    assert data[0]["status"] == "SENT"
+    assert data[0]["recipient_email"] == "runner@example.com"
+
+
+def test_admin_list_communications_order_not_found(admin_client):
+    resp = admin_client.get("/api/admin/orders/999999/communications")
+    assert resp.status_code == 404
+
+
+def test_admin_list_communications_requires_admin(client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+    resp = client.get(f"/api/admin/orders/{order.id}/communications")
+    assert resp.status_code == 401
+
+
+def test_admin_send_email_creates_communication_and_queues_task(
+    admin_client, db_session, test_photos, mock_celery_send_task
+):
+    from photostore.models import Communication, CommunicationKind, CommunicationStatus
+
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.post(
+        f"/api/admin/orders/{order.id}/communications/send",
+        json={"kind": "DOWNLOAD_READY"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["kind"] == "DOWNLOAD_READY"
+    assert data["status"] == "QUEUED"
+    assert data["initiated_by"] == "admin"
+
+    comm = db_session.query(Communication).filter(
+        Communication.order_id == order.id,
+        Communication.kind == CommunicationKind.DOWNLOAD_READY,
+    ).first()
+    assert comm is not None
+    assert comm.status == CommunicationStatus.QUEUED
+
+    send_email_calls = [
+        c for c in mock_celery_send_task.call_args_list
+        if c.args and c.args[0] == "tasks.send_email.send_email"
+    ]
+    assert len(send_email_calls) == 1
+    assert send_email_calls[0].kwargs["args"] == [comm.id]
+
+
+def test_admin_send_email_order_not_found(admin_client):
+    resp = admin_client.post(
+        "/api/admin/orders/999999/communications/send",
+        json={"kind": "ORDER_CONFIRMED"},
+    )
+    assert resp.status_code == 404
+
+
+def test_admin_send_email_requires_admin(client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+    resp = client.post(
+        f"/api/admin/orders/{order.id}/communications/send",
+        json={"kind": "ORDER_CONFIRMED"},
+    )
+    assert resp.status_code == 401
+
+
+def test_admin_reset_delivery_queues_delivery_reset_email(
+    admin_client, db_session, test_photos, mock_celery_send_task, monkeypatch
+):
+    """reset-delivery should enqueue a DELIVERY_RESET email when EMAIL_ENABLED=True."""
+    from photostore.config import settings
+    from photostore.models import Communication, CommunicationKind
+
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.post(
+        f"/api/admin/orders/{order.id}/reset-delivery",
+        json={"rotate_token": True, "days_valid": 30},
+    )
+    assert resp.status_code == 200
+
+    comm = db_session.query(Communication).filter(
+        Communication.order_id == order.id,
+        Communication.kind == CommunicationKind.DELIVERY_RESET,
+    ).first()
+    assert comm is not None
+
+    send_email_calls = [
+        c for c in mock_celery_send_task.call_args_list
+        if c.args and c.args[0] == "tasks.send_email.send_email"
+    ]
+    assert len(send_email_calls) == 1

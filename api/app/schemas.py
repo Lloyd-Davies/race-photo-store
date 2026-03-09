@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, model_validator
 
-from photostore.models import EventStatus, OrderStatus
+from photostore.models import CommunicationKind, CommunicationStatus, EventStatus, OrderStatus
 
 
 # ---------------------------------------------------------------------------
@@ -229,3 +229,21 @@ class AdminSessionOut(BaseModel):
     access_expires_at: datetime
     refresh_token: str
     refresh_expires_at: datetime
+
+
+class CommunicationOut(BaseModel):
+    id: int
+    kind: CommunicationKind
+    status: CommunicationStatus
+    recipient_email: str
+    subject: str
+    initiated_by: Optional[str] = None
+    created_at: datetime
+    sent_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AdminSendEmailRequest(BaseModel):
+    kind: CommunicationKind

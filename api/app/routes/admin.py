@@ -17,6 +17,7 @@ from app.event_access import hash_event_password
 from app.rate_limit import enforce_rate_limit
 from app.schemas import (
     AdminLoginRequest,
+    AdminSendEmailRequest,
     AdminStatsOut,
     AdminRefreshRequest,
     AdminOrderListOut,
@@ -25,6 +26,7 @@ from app.schemas import (
     AdminSessionOut,
     BibTagsRequest,
     BibTagsResult,
+    CommunicationOut,
     CreateEventRequest,
     DeleteEventResult,
     PhotoIdsOut,
@@ -35,7 +37,11 @@ from app.schemas import (
 )
 from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import Cart, Delivery, Event, EventStatus, Order, OrderItem, OrderStatus, Photo, PhotoState, PhotoTag
+from photostore.models import (
+    Cart, Communication, CommunicationKind, CommunicationStatus,
+    Delivery, Event, EventStatus, Order, OrderItem, OrderStatus,
+    Photo, PhotoState, PhotoTag,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -601,9 +607,10 @@ def list_orders(
     if status:
         query = query.filter(Order.status == status)
 
-    rows = query.limit(limit).all()
-
+    # When a free-text search is requested we must filter first and limit after,
+    # otherwise the limit can silently drop matching rows.
     if q:
+        rows = query.all()
         needle = q.strip().lower()
         filtered_rows = []
         for order, delivery, item_count in rows:
@@ -615,7 +622,9 @@ def list_orders(
             ]
             if any(needle in h for h in haystack):
                 filtered_rows.append((order, delivery, item_count))
-        rows = filtered_rows
+        rows = filtered_rows[:limit]
+    else:
+        rows = query.limit(limit).all()
 
     result: list[AdminOrderOut] = []
     for order, delivery, item_count in rows:
@@ -657,6 +666,21 @@ def reset_delivery(
 
     db.commit()
     db.refresh(delivery)
+
+    if settings.EMAIL_ENABLED and order.email:
+        comm = Communication(
+            order_id=order_id,
+            kind=CommunicationKind.DELIVERY_RESET,
+            status=CommunicationStatus.QUEUED,
+            provider="brevo",
+            recipient_email=order.email,
+            subject="Your download link has been reset",
+            template_key="DELIVERY_RESET",
+            initiated_by="admin",
+        )
+        db.add(comm)
+        db.commit()
+        celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
 
     item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
 
@@ -719,3 +743,63 @@ def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrde
     db.refresh(order)
     item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
     return _to_admin_order_out(order, item_count, None)
+
+
+@router.get(
+    "/orders/{order_id}/communications",
+    response_model=list[CommunicationOut],
+    dependencies=[Depends(require_admin)],
+)
+def list_communications(order_id: int, db: Session = Depends(get_db)) -> list[CommunicationOut]:
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    comms = (
+        db.query(Communication)
+        .filter(Communication.order_id == order_id)
+        .order_by(Communication.created_at.desc())
+        .all()
+    )
+    return comms  # type: ignore[return-value]
+
+
+@router.post(
+    "/orders/{order_id}/communications/send",
+    response_model=CommunicationOut,
+    dependencies=[Depends(require_admin)],
+)
+def send_communication(
+    order_id: int,
+    req: AdminSendEmailRequest,
+    db: Session = Depends(get_db),
+) -> CommunicationOut:
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if not order.email:
+        raise HTTPException(409, "Order has no email address")
+
+    subject_map = {
+        CommunicationKind.ORDER_CONFIRMED: "Your order is confirmed",
+        CommunicationKind.DOWNLOAD_READY: "Your photos are ready to download",
+        CommunicationKind.DELIVERY_RESET: "Your download link has been reset",
+    }
+
+    comm = Communication(
+        order_id=order_id,
+        kind=req.kind,
+        status=CommunicationStatus.QUEUED,
+        provider="brevo",
+        recipient_email=order.email,
+        subject=subject_map[req.kind],
+        template_key=req.kind.value,
+        initiated_by="admin",
+    )
+    db.add(comm)
+    db.commit()
+    db.refresh(comm)
+
+    celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
+
+    return comm  # type: ignore[return-value]
