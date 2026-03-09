@@ -7,6 +7,7 @@ import OrderStatus from './pages/OrderStatus'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminEvents from './pages/admin/AdminEvents'
 import AdminIngest from './pages/admin/AdminIngest'
+import AdminOrderDetail from './pages/admin/AdminOrderDetail'
 import AdminOrders from './pages/admin/AdminOrders'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="events" element={<AdminEvents />} />
           <Route path="events/:eventId/ingest" element={<AdminIngest />} />
           <Route path="orders" element={<AdminOrders />} />
+          <Route path="orders/:orderId" element={<AdminOrderDetail />} />
         </Route>
 
         {/* Fallback */}

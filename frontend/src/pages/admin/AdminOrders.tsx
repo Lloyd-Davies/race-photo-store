@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link2, RotateCcw, Search, ClipboardCopy, RefreshCw, Ban } from 'lucide-react'
+import { Link2, RotateCcw, Search, ClipboardCopy, RefreshCw, Ban, ChevronRight } from 'lucide-react'
 import Button from '../../components/Button'
 import {
   expireAdminOrderDelivery,
@@ -108,12 +109,22 @@ export default function AdminOrders() {
           <div key={order.id} className="bg-surface-900 border border-surface-700 rounded-xl p-4">
             <div className="flex flex-wrap items-center gap-2 justify-between mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-content">Order #{order.id}</span>
+                <Link
+                  to={`/admin/orders/${order.id}`}
+                  className="text-sm font-semibold text-content hover:text-sky-400"
+                >
+                  Order #{order.id}
+                </Link>
                 <span className={`text-xs rounded px-2 py-0.5 ${statusClass(order.status)}`}>
                   {order.status}
                 </span>
               </div>
-              <span className="text-xs text-content-muted">{new Date(order.created_at).toLocaleString()}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-content-muted">{new Date(order.created_at).toLocaleString()}</span>
+                <Link to={`/admin/orders/${order.id}`} className="text-content-muted hover:text-content">
+                  <ChevronRight size={14} />
+                </Link>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm mb-4">

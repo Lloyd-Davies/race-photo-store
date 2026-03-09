@@ -19,6 +19,28 @@ export interface AdminOrderList {
   orders: AdminOrder[]
 }
 
+export type CommunicationKind = 'ORDER_CONFIRMED' | 'DOWNLOAD_READY' | 'DELIVERY_RESET'
+export type CommunicationStatus =
+  | 'QUEUED'
+  | 'SENT'
+  | 'FAILED'
+  | 'DELIVERED'
+  | 'BOUNCED'
+  | 'BLOCKED'
+  | 'DEFERRED'
+
+export interface Communication {
+  id: number
+  kind: CommunicationKind
+  status: CommunicationStatus
+  recipient_email: string
+  subject: string
+  initiated_by?: string
+  created_at: string
+  sent_at?: string
+  error_message?: string
+}
+
 export const fetchAdminOrders = (params?: { status?: OrderStatus | 'ALL'; q?: string; limit?: number }) => {
   const query = new URLSearchParams()
   if (params?.status && params.status !== 'ALL') query.set('status', params.status)
@@ -38,3 +60,9 @@ export const rebuildAdminOrderZip = (orderId: number) =>
 
 export const expireAdminOrderDelivery = (orderId: number) =>
   apiPost<AdminOrder>(`/admin/orders/${orderId}/expire-delivery`)
+
+export const fetchOrderCommunications = (orderId: number) =>
+  apiGet<Communication[]>(`/admin/orders/${orderId}/communications`)
+
+export const sendAdminEmail = (orderId: number, kind: CommunicationKind) =>
+  apiPost<Communication>(`/admin/orders/${orderId}/communications/send`, { kind })
