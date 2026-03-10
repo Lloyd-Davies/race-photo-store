@@ -17,5 +17,5 @@ export const createCart = (body: {
   email?: string
 }) => apiPost<CartResponse>('/carts', body)
 
-export const createCheckout = (cart_id: string) =>
-  apiPost<CheckoutResponse>('/checkout', { cart_id })
+export const createCheckout = (cart_id: string, email?: string) =>
+  apiPost<CheckoutResponse>('/checkout', { cart_id, email: email || undefined })

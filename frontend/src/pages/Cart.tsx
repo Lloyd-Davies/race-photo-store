@@ -18,6 +18,7 @@ export default function Cart() {
   const checkoutMut = useMutation({
     mutationFn: async () => {
       if (!eventId) throw new Error('No event selected')
+      if (!email.trim()) throw new Error('Email address is required')
       setError(null)
 
       // Create cart server-side
@@ -28,7 +29,7 @@ export default function Cart() {
       })
 
       // Create Stripe checkout session
-      const checkout = await createCheckout(cart.cart_id)
+      const checkout = await createCheckout(cart.cart_id, email || undefined)
 
       // Store order ID so we can return to it if the user navigates back
       localStorage.setItem('lastOrderId', String(checkout.order_id))
@@ -93,10 +94,12 @@ export default function Cart() {
       <div className="mb-6">
         <label className="block text-sm text-gray-300 mb-2 font-medium">
           <Mail size={14} className="inline mr-1.5 text-sky-500" />
-          Email (optional — for order confirmation)
+          Email <span className="text-red-400">*</span>
+          <span className="ml-1 font-normal text-gray-500">— order confirmation &amp; download link</span>
         </label>
         <input
           type="email"
+          required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
