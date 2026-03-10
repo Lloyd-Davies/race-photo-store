@@ -17,6 +17,9 @@ from app.event_access import hash_event_password
 from app.rate_limit import enforce_rate_limit
 from app.schemas import (
     AdminLoginRequest,
+    AdminEmailConfigOut,
+    AdminEmailTestRequest,
+    AdminEmailTestOut,
     AdminSendEmailRequest,
     AdminStatsOut,
     AdminRefreshRequest,
@@ -37,6 +40,7 @@ from app.schemas import (
 )
 from photostore.celery_app import celery_app
 from photostore.config import settings
+from photostore.email_provider import EmailMessage, ProviderError, get_provider
 from photostore.models import (
     Cart, Communication, CommunicationKind, CommunicationStatus,
     Delivery, Event, EventStatus, Order, OrderItem, OrderStatus,
@@ -803,3 +807,77 @@ def send_communication(
     celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
 
     return comm  # type: ignore[return-value]
+
+
+# ── Email config & test ──────────────────────────────────────────────────────
+
+@router.get("/email/config", response_model=AdminEmailConfigOut, dependencies=[Depends(require_admin)])
+def get_email_config() -> AdminEmailConfigOut:
+    """Return current email configuration as seen by the running process."""
+    return AdminEmailConfigOut(
+        email_enabled=settings.EMAIL_ENABLED,
+        provider=settings.EMAIL_PROVIDER,
+        from_address=settings.EMAIL_FROM_ADDRESS,
+        from_name=settings.EMAIL_FROM_NAME,
+        brevo_key_set=bool(settings.BREVO_API_KEY),
+        support_email=settings.SUPPORT_EMAIL,
+        order_email_required=settings.ORDER_EMAIL_REQUIRED,
+    )
+
+
+@router.post("/email/test", response_model=AdminEmailTestOut, dependencies=[Depends(require_admin)])
+def send_test_email(req: AdminEmailTestRequest) -> AdminEmailTestOut:
+    """Send a test email directly (synchronous, not via Celery) for config verification."""
+    provider_name = settings.EMAIL_PROVIDER if settings.EMAIL_ENABLED else "noop"
+
+    if not settings.EMAIL_ENABLED:
+        return AdminEmailTestOut(
+            sent=False,
+            email_enabled=False,
+            provider=provider_name,
+            from_address=settings.EMAIL_FROM_ADDRESS,
+            message="EMAIL_ENABLED is False — no email sent",
+        )
+
+    try:
+        provider = get_provider()
+        provider_name = type(provider).__name__
+        msg = EmailMessage(
+            to_email=req.to_email,
+            to_name=req.to_email,
+            subject=f"[{settings.SITE_NAME}] Test email",
+            html_body=(
+                f"<p>This is a test email from <strong>{settings.SITE_NAME}</strong>.</p>"
+                f"<p>If you received this, your email configuration is working correctly.</p>"
+            ),
+            text_body=(
+                f"This is a test email from {settings.SITE_NAME}.\n\n"
+                "If you received this, your email configuration is working correctly."
+            ),
+            from_email=settings.EMAIL_FROM_ADDRESS,
+            from_name=settings.EMAIL_FROM_NAME,
+        )
+        message_id = provider.send(msg)
+        return AdminEmailTestOut(
+            sent=True,
+            email_enabled=True,
+            provider=provider_name,
+            from_address=settings.EMAIL_FROM_ADDRESS,
+            message=f"Sent OK — message_id: {message_id}",
+        )
+    except ProviderError as exc:
+        return AdminEmailTestOut(
+            sent=False,
+            email_enabled=True,
+            provider=provider_name,
+            from_address=settings.EMAIL_FROM_ADDRESS,
+            message=f"Provider error: {exc}",
+        )
+    except Exception as exc:
+        return AdminEmailTestOut(
+            sent=False,
+            email_enabled=True,
+            provider=provider_name,
+            from_address=settings.EMAIL_FROM_ADDRESS,
+            message=f"Unexpected error: {exc}",
+        )

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { CalendarDays, LogOut, ShieldAlert, ReceiptText } from 'lucide-react'
+import { CalendarDays, LogOut, ShieldAlert, ReceiptText, Settings } from 'lucide-react'
 import Button from '../../components/Button'
 import { fetchAdminStats } from '../../api/adminStats'
 import { adminLogin, refreshAdminSession, verifyAdminSession } from '../../api/adminAuth'
@@ -209,6 +209,20 @@ export default function AdminLayout() {
           Orders
         </NavLink>
 
+        <NavLink
+          to="/admin/settings"
+          className={({ isActive }) =>
+            `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              isActive
+                ? 'bg-sky-500/20 text-sky-500'
+                : 'text-content-muted hover:bg-surface-800 hover:text-content'
+            }`
+          }
+        >
+          <Settings size={16} />
+          Settings
+        </NavLink>
+
         <div className="!mt-6">
           <button
             onClick={handleLogout}
@@ -284,6 +298,17 @@ export default function AdminLayout() {
         >
           <ReceiptText size={20} />
           Orders
+        </NavLink>
+        <NavLink
+          to="/admin/settings"
+          className={({ isActive }) =>
+            `flex flex-1 flex-col items-center justify-center gap-0.5 py-3 text-[11px] font-medium transition-colors ${
+              isActive ? 'text-sky-400' : 'text-content-muted'
+            }`
+          }
+        >
+          <Settings size={20} />
+          Settings
         </NavLink>
         <button
           type="button"

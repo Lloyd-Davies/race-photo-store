@@ -852,3 +852,77 @@ def test_admin_reset_delivery_queues_delivery_reset_email(
         if c.args and c.args[0] == "tasks.send_email.send_email"
     ]
     assert len(send_email_calls) == 1
+
+
+# ── Email config & test ───────────────────────────────────────────────────────
+
+def test_email_config_returns_current_settings(admin_client, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "EMAIL_FROM_ADDRESS", "from@example.com")
+
+    resp = admin_client.get("/api/admin/email/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["email_enabled"] is True
+    assert data["brevo_key_set"] is True
+    assert data["from_address"] == "from@example.com"
+
+
+def test_email_test_disabled_returns_not_sent(admin_client, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", False)
+
+    resp = admin_client.post("/api/admin/email/test", json={"to_email": "test@example.com"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] is False
+    assert data["email_enabled"] is False
+    assert "EMAIL_ENABLED is False" in data["message"]
+
+
+def test_email_test_enabled_sends_and_returns_ok(admin_client, monkeypatch):
+    from unittest.mock import MagicMock, patch
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "EMAIL_FROM_ADDRESS", "from@example.com")
+    monkeypatch.setattr(settings, "EMAIL_FROM_NAME", "Test")
+
+    mock_provider = MagicMock()
+    mock_provider.send.return_value = "msg-123"
+
+    with patch("app.routes.admin.get_provider", return_value=mock_provider):
+        resp = admin_client.post("/api/admin/email/test", json={"to_email": "dest@example.com"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] is True
+    assert data["email_enabled"] is True
+    assert "msg-123" in data["message"]
+    mock_provider.send.assert_called_once()
+
+
+def test_email_test_provider_error_returns_failed(admin_client, monkeypatch):
+    from unittest.mock import MagicMock, patch
+    from photostore.config import settings
+    from photostore.email_provider import ProviderError
+
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "EMAIL_FROM_ADDRESS", "from@example.com")
+    monkeypatch.setattr(settings, "EMAIL_FROM_NAME", "Test")
+
+    mock_provider = MagicMock()
+    mock_provider.send.side_effect = ProviderError("Brevo returned 401: Unauthorized")
+
+    with patch("app.routes.admin.get_provider", return_value=mock_provider):
+        resp = admin_client.post("/api/admin/email/test", json={"to_email": "dest@example.com"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] is False
+    assert data["email_enabled"] is True
+    assert "401" in data["message"]

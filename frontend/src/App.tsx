@@ -9,6 +9,7 @@ import AdminEvents from './pages/admin/AdminEvents'
 import AdminIngest from './pages/admin/AdminIngest'
 import AdminOrderDetail from './pages/admin/AdminOrderDetail'
 import AdminOrders from './pages/admin/AdminOrders'
+import AdminSettings from './pages/admin/AdminSettings'
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="events/:eventId/ingest" element={<AdminIngest />} />
           <Route path="orders" element={<AdminOrders />} />
           <Route path="orders/:orderId" element={<AdminOrderDetail />} />
+          <Route path="settings" element={<AdminSettings />} />
         </Route>
 
         {/* Fallback */}

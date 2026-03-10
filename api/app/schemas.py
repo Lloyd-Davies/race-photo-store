@@ -247,3 +247,25 @@ class CommunicationOut(BaseModel):
 
 class AdminSendEmailRequest(BaseModel):
     kind: CommunicationKind
+
+
+class AdminEmailConfigOut(BaseModel):
+    email_enabled: bool
+    provider: str
+    from_address: str
+    from_name: str
+    brevo_key_set: bool
+    support_email: str
+    order_email_required: bool
+
+
+class AdminEmailTestRequest(BaseModel):
+    to_email: EmailStr
+
+
+class AdminEmailTestOut(BaseModel):
+    sent: bool
+    email_enabled: bool
+    provider: str
+    from_address: str
+    message: str
