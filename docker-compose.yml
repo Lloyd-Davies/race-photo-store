@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: photostore
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ./data/pgdata:/var/lib/postgresql/data
+      - /mnt/pstore/pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U photostore -d photostore"]
       interval: 5s
@@ -21,7 +21,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - ./data/redis:/data
+      - /mnt/pstore/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -32,9 +32,7 @@ services:
 
   api:
     container_name: photostore-api
-    build:
-      context: .
-      dockerfile: api/Dockerfile
+    image: ghcr.io/lloyd-davies/race-photo-store/api:dev-latest
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
@@ -49,7 +47,7 @@ services:
       ADMIN_REFRESH_TTL_HOURS: ${ADMIN_REFRESH_TTL_HOURS:-12}
       EVENT_ACCESS_TTL_HOURS: ${EVENT_ACCESS_TTL_HOURS:-12}
       ORDER_ACCESS_TTL_HOURS: ${ORDER_ACCESS_TTL_HOURS:-720}
-      MAX_PHOTO_UPLOAD_BYTES: ${MAX_PHOTO_UPLOAD_BYTES:-104857600}
+      MAX_PHOTO_UPLOAD_BYTES: ${MAX_PHOTO_UPLOAD_BYTES:-26214400}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       SITE_TAGLINE: ${SITE_TAGLINE:-Your race, your photos.}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
@@ -60,7 +58,7 @@ services:
       ORDER_EMAIL_REQUIRED: ${ORDER_EMAIL_REQUIRED:-true}
       UVICORN_WORKERS: "2"
     volumes:
-      - ./data/photos:/data/photos
+      - /mnt/pstore/photos:/data/photos
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,9 +69,7 @@ services:
 
   worker:
     container_name: photostore-worker
-    build:
-      context: .
-      dockerfile: worker/Dockerfile
+    image: ghcr.io/lloyd-davies/race-photo-store/worker:dev-latest
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
@@ -85,7 +81,7 @@ services:
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       CELERY_CONCURRENCY: "2"
     volumes:
-      - ./data/photos:/data/photos
+      - /mnt/pstore/photos:/data/photos
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,11 +92,9 @@ services:
 
   nginx:
     container_name: photostore-nginx
-    build:
-      context: .
-      dockerfile: nginx/Dockerfile
+    image: ghcr.io/lloyd-davies/race-photo-store/nginx:dev-latest
     volumes:
-      - ./data/photos:/srv/photos:ro
+      - /mnt/pstore/photos:/srv/photos:ro
     depends_on:
       - api
     ports:
