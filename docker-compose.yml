@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: photostore
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - /mnt/pstore/pgdata:/var/lib/postgresql/data
+      - ./data/pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U photostore -d photostore"]
       interval: 5s
@@ -21,7 +21,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - /mnt/pstore/redis:/data
+      - ./data/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -32,7 +32,9 @@ services:
 
   api:
     container_name: photostore-api
-    image: ghcr.io/lloyd-davies/race-photo-store/api:latest
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
@@ -50,9 +52,15 @@ services:
       MAX_PHOTO_UPLOAD_BYTES: ${MAX_PHOTO_UPLOAD_BYTES:-104857600}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       SITE_TAGLINE: ${SITE_TAGLINE:-Your race, your photos.}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Race Photos}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      ORDER_EMAIL_REQUIRED: ${ORDER_EMAIL_REQUIRED:-true}
       UVICORN_WORKERS: "2"
     volumes:
-      - /mnt/pstore/photos:/data/photos
+      - ./data/photos:/data/photos
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,14 +71,21 @@ services:
 
   worker:
     container_name: photostore-worker
-    image: ghcr.io/lloyd-davies/race-photo-store/worker:latest
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/photos
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Race Photos}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       CELERY_CONCURRENCY: "2"
     volumes:
-      - /mnt/pstore/photos:/data/photos
+      - ./data/photos:/data/photos
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,9 +96,11 @@ services:
 
   nginx:
     container_name: photostore-nginx
-    image: ghcr.io/lloyd-davies/race-photo-store/nginx:latest
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
     volumes:
-      - /mnt/pstore/photos:/srv/photos:ro
+      - ./data/photos:/srv/photos:ro
     depends_on:
       - api
     ports:
