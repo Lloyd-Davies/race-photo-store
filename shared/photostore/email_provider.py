@@ -40,6 +40,8 @@ class BrevoProvider:
             "subject": msg.subject,
             "htmlContent": msg.html_body,
             "textContent": msg.text_body,
+            "trackClicks": False,
+            "trackOpens": False,
         }
         headers = {
             "api-key": self._api_key,
