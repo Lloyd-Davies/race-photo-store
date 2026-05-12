@@ -26,7 +26,7 @@ Notes:
 
 - `docker-compose.yml` binds nginx to `127.0.0.1:8081`, so external traffic is intended to come through Cloudflare Tunnel.
 - `CLOUDFLARE_TUNNEL_TOKEN` is required for current production exposure.
-- Local dev can run without tunnel (see `docker-compose.local.yml`, where `cloudflared` is disabled by profile).
+- Local dev uses `docker-compose.override.yml` for bind-mounted local data and local image builds.
 
 ## Quick start (local)
 
@@ -63,17 +63,22 @@ sudo chown -R $USER:$USER /mnt/pstore
 - `PUBLIC_BASE_URL`
 - `ADMIN_TOKEN`
 - `CLOUDFLARE_TUNNEL_TOKEN`
+- `IMAGE_TAG` set to a release tag such as `v0.1.0`
 
 3) Optional but recommended:
 
 - `ADMIN_SESSION_SECRET`
 - Stripe vars (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`)
+- Email vars (`EMAIL_ENABLED`, `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS`, `SUPPORT_EMAIL`)
 
 4) Deploy `docker-compose.yml` (Portainer or Docker), then verify:
 
 - `GET /api/health` returns healthy
 - admin login works
 - gallery, checkout, and download flow work end-to-end
+- Brevo test email arrives and all email links use the public app domain
+- Stripe webhook is configured to `https://your-domain/api/stripe/webhook`
+- Cloudflare public hostname points to the tunnel service URL for nginx
 
 ## Security model
 
@@ -120,6 +125,19 @@ Primary env vars:
 | `ADMIN_TOKEN` | Base admin credential for login |
 | `ADMIN_SESSION_SECRET` | Signing key for admin/event/order access tokens |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare tunnel connector token |
+| `IMAGE_TAG` | GHCR image tag to deploy; use a pinned release tag in production |
+
+Email env vars:
+
+| Variable | Purpose |
+|---|---|
+| `EMAIL_ENABLED` | Enables transactional email sending |
+| `BREVO_API_KEY` | Brevo transactional API key |
+| `EMAIL_FROM_ADDRESS` | Verified sender address |
+| `EMAIL_FROM_NAME` | Sender display name |
+| `SUPPORT_EMAIL` | Support address included in templates |
+| `ORDER_EMAIL_REQUIRED` | Requires checkout email when true |
+| `BREVO_WEBHOOK_SECRET` | Shared secret reserved for Brevo webhook handling |
 
 Security tuning:
 
@@ -136,8 +154,15 @@ Security tuning:
 ```bash
 python -m pytest api/tests -q
 python -m pytest worker/tests -q
+npm --prefix frontend run typecheck
 npm --prefix frontend run build
 ```
+
+## CI and releases
+
+- `.github/workflows/ci.yml` runs API tests, worker tests, frontend typecheck, and frontend build.
+- `.github/workflows/build.yml` pushes GHCR images for `api`, `worker`, and `nginx` only after test jobs pass.
+- Branch pushes publish mutable dev/main tags; production should deploy immutable `v*` image tags.
 
 ## Repo layout
 

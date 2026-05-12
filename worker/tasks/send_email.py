@@ -11,6 +11,7 @@ Design:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from photostore.celery_app import celery_app
 from photostore.config import settings
@@ -23,6 +24,7 @@ from photostore.email_templates import (
 )
 from photostore.email_types import CommunicationKind, CommunicationStatus
 from photostore.models import Communication, Delivery, Event, Order, OrderItem
+from photostore.order_access import create_order_access_token
 
 _RENDER_MAP = {
     CommunicationKind.ORDER_CONFIRMED: render_order_confirmed,
@@ -52,13 +54,14 @@ def _build_context(order: Order, db) -> dict:
         event_name = event_slug
 
     base_url = settings.PUBLIC_BASE_URL.rstrip("/")
-    order_status_url = f"{base_url}/orders/{order.id}"
+    order_access_token, _ = create_order_access_token(order.id)
+    order_status_url = f"{base_url}/orders/{order.id}?{urlencode({'access_token': order_access_token})}"
 
     direct_download_url = ""
     download_expires_at = ""
     max_downloads = ""
     if delivery:
-        direct_download_url = f"{base_url}/download/{delivery.token}"
+        direct_download_url = f"{base_url}/d/{delivery.token}"
         download_expires_at = delivery.expires_at.strftime("%d %B %Y") if delivery.expires_at else ""
         max_downloads = str(delivery.max_downloads)
 

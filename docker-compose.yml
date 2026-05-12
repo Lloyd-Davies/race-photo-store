@@ -32,7 +32,7 @@ services:
 
   api:
     container_name: photostore-api
-    image: ghcr.io/lloyd-davies/race-photo-store/api:dev-latest
+    image: ghcr.io/lloyd-davies/race-photo-store/api:${IMAGE_TAG:-dev-latest}
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
@@ -56,6 +56,7 @@ services:
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Race Photos}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       ORDER_EMAIL_REQUIRED: ${ORDER_EMAIL_REQUIRED:-true}
+      BREVO_WEBHOOK_SECRET: ${BREVO_WEBHOOK_SECRET:-}
       UVICORN_WORKERS: "2"
     volumes:
       - /mnt/pstore/photos:/data/photos
@@ -69,11 +70,16 @@ services:
 
   worker:
     container_name: photostore-worker
-    image: ghcr.io/lloyd-davies/race-photo-store/worker:dev-latest
+    image: ghcr.io/lloyd-davies/race-photo-store/worker:${IMAGE_TAG:-dev-latest}
     environment:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/photos
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      ORDER_ACCESS_TTL_HOURS: ${ORDER_ACCESS_TTL_HOURS:-720}
+      SITE_NAME: ${SITE_NAME:-Race Photos}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
@@ -92,7 +98,7 @@ services:
 
   nginx:
     container_name: photostore-nginx
-    image: ghcr.io/lloyd-davies/race-photo-store/nginx:dev-latest
+    image: ghcr.io/lloyd-davies/race-photo-store/nginx:${IMAGE_TAG:-dev-latest}
     volumes:
       - /mnt/pstore/photos:/srv/photos:ro
     depends_on:
@@ -105,7 +111,7 @@ services:
   cloudflared:
     container_name: photostore-cloudflared
     image: cloudflare/cloudflared:latest
-    command: tunnel run --token ${TUNNEL_TOKEN}
+    command: tunnel run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:

@@ -6,8 +6,10 @@ The Brevo HTTP provider is mocked so no real network calls are made.
 """
 
 import importlib
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,9 +29,9 @@ def _get_send_email_task():
     return _get_se_module().send_email
 
 
-def _seed_order_and_communication(db_session, kind="ORDER_CONFIRMED"):
+def _seed_order_and_communication(db_session, kind="ORDER_CONFIRMED", with_delivery=False):
     from photostore.models import (
-        Communication, CommunicationKind, CommunicationStatus,
+        Communication, CommunicationKind, CommunicationStatus, Delivery,
         Event, Order, OrderStatus,
     )
 
@@ -62,6 +64,18 @@ def _seed_order_and_communication(db_session, kind="ORDER_CONFIRMED"):
     )
     db_session.add(comm)
     db_session.flush()
+
+    if with_delivery:
+        db_session.add(Delivery(
+            order_id=order.id,
+            token="download-token-123",
+            zip_path=f"zips/order-{order.id}.zip",
+            event_slug=event.slug,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            max_downloads=5,
+            download_count=0,
+        ))
+        db_session.flush()
 
     return order, comm
 
@@ -108,6 +122,51 @@ def test_send_email_stores_rendered_bodies(db_session, monkeypatch):
     db_session.refresh(comm)
     assert "<html" in comm.body_html.lower() or len(comm.body_html) > 10
     assert len(comm.body_text) > 10
+
+
+def test_send_email_order_status_link_includes_valid_access_token(db_session, monkeypatch):
+    from photostore.order_access import verify_order_access_token
+
+    se_module = _get_se_module()
+    order, comm = _seed_order_and_communication(db_session)
+
+    mock_provider = MagicMock()
+    mock_provider.send.return_value = "msg-status-link"
+
+    monkeypatch.setattr(se_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(se_module, "_get_provider", lambda: mock_provider)
+
+    _get_send_email_task().apply(args=[comm.id])
+
+    db_session.refresh(comm)
+    match = re.search(r"http://testserver/orders/\d+\?access_token=[^\"<\s]+", comm.body_html)
+    assert match is not None
+    parsed = urlparse(match.group(0))
+    token = parse_qs(parsed.query)["access_token"][0]
+    assert parsed.path == f"/orders/{order.id}"
+    assert verify_order_access_token(token, order.id)
+
+
+def test_send_email_download_ready_uses_public_download_route(db_session, monkeypatch):
+    se_module = _get_se_module()
+    order, comm = _seed_order_and_communication(
+        db_session,
+        kind="DOWNLOAD_READY",
+        with_delivery=True,
+    )
+
+    mock_provider = MagicMock()
+    mock_provider.send.return_value = "msg-download-link"
+
+    monkeypatch.setattr(se_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(se_module, "_get_provider", lambda: mock_provider)
+
+    _get_send_email_task().apply(args=[comm.id])
+
+    db_session.refresh(comm)
+    assert "http://testserver/d/download-token-123" in comm.body_html
+    assert "http://testserver/d/download-token-123" in comm.body_text
+    assert "/download/download-token-123" not in comm.body_html
 
 
 # ---------------------------------------------------------------------------
