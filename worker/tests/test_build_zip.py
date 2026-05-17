@@ -147,7 +147,25 @@ def test_build_zip_creates_delivery_token(db_session, tmp_path, monkeypatch):
     assert delivery is not None
     assert len(delivery.token) == 36  # UUID format
     assert delivery.download_count == 0
-    assert delivery.max_downloads == 5
+    assert delivery.max_downloads == 100
+
+
+def test_build_zip_uses_configured_max_downloads(db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+    bz_module = _get_bz_module()
+
+    storage = tmp_path / "photos"
+    order = _seed(db_session, storage)
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    monkeypatch.setattr(settings, "DOWNLOAD_MAX_DOWNLOADS", 42)
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+
+    _get_build_zip_task().apply(args=[order.id])
+
+    delivery = db_session.query(Delivery).filter(Delivery.order_id == order.id).first()
+    assert delivery is not None
+    assert delivery.max_downloads == 42
 
 
 # ---------------------------------------------------------------------------

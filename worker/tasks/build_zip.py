@@ -15,7 +15,6 @@ from photostore.models import (
 )
 
 DOWNLOAD_TTL_DAYS = 30
-MAX_DOWNLOADS = 5
 
 
 @celery_app.task(name="tasks.build_zip.build_zip", bind=True, max_retries=3)
@@ -81,7 +80,7 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
             zip_path=f"zips/order-{order_id}.zip",
             event_slug=event_slug,
             expires_at=datetime.now(timezone.utc) + timedelta(days=DOWNLOAD_TTL_DAYS),
-            max_downloads=MAX_DOWNLOADS,
+            max_downloads=settings.DOWNLOAD_MAX_DOWNLOADS,
             download_count=0,
         )
         db.add(delivery)
