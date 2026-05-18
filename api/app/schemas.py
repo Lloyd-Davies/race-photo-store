@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from photostore.models import CommunicationKind, CommunicationStatus, EventStatus, OrderStatus
 
@@ -89,10 +89,17 @@ class CheckoutOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class OrderDownloadItemOut(BaseModel):
+    photo_id: str
+    proof_url: Optional[str] = None
+    download_url: str
+
+
 class OrderOut(BaseModel):
     id: int
     status: OrderStatus
     download_url: Optional[str] = None
+    download_items: list[OrderDownloadItemOut] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

@@ -6,6 +6,8 @@ import { useCartStore } from '../store/cart'
 import { createCart } from '../api/cart'
 import { createCheckout } from '../api/cart'
 import Button from '../components/Button'
+import EmbeddedBrowserWarning from '../components/EmbeddedBrowserWarning'
+import { isEmbeddedInAppBrowser } from '../utils/embeddedBrowser'
 
 export default function Cart() {
   const items = useCartStore((s) => s.items)
@@ -14,6 +16,7 @@ export default function Cart() {
   const clear = useCartStore((s) => s.clear)
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const isInAppBrowser = isEmbeddedInAppBrowser()
 
   const checkoutMut = useMutation({
     mutationFn: async () => {
@@ -65,6 +68,8 @@ export default function Cart() {
       <h1 className="text-xl font-bold text-content mb-6">
         Your cart — {items.length} photo{items.length !== 1 ? 's' : ''}
       </h1>
+
+      {isInAppBrowser && <EmbeddedBrowserWarning mode="checkout" />}
 
       {/* Photo list */}
       <div className="space-y-3 mb-8">
@@ -127,8 +132,8 @@ export default function Cart() {
       </div>
 
       <p className="mt-4 text-xs text-gray-500 text-center">
-        You'll be redirected to Stripe's secure checkout. Photos are delivered as a
-        ZIP download after payment.
+        You'll be redirected to Stripe's secure checkout. Photos are delivered by
+        ZIP and individual image links after payment.
       </p>
     </div>
   )

@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -8,10 +9,10 @@ from sqlalchemy.orm import Session
 from app.deps import get_db
 from app.order_access import verify_order_access_token
 from app.rate_limit import enforce_rate_limit
-from app.schemas import OrderOut
+from app.schemas import OrderDownloadItemOut, OrderOut
 from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import Delivery, Order, OrderStatus
+from photostore.models import Delivery, Order, OrderItem, OrderStatus
 
 router = APIRouter(prefix="/api", tags=["orders"])
 logger = logging.getLogger(__name__)
@@ -71,9 +72,36 @@ def get_order(
         _try_fulfill_from_stripe(order, db)
 
     download_url: str | None = None
+    download_items: list[OrderDownloadItemOut] = []
     if order.status == OrderStatus.READY:
         delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
         if delivery:
-            download_url = f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}"
+            base_url = settings.PUBLIC_BASE_URL.rstrip("/")
+            download_url = f"{base_url}/d/{delivery.token}"
+            items = (
+                db.query(OrderItem)
+                .filter(OrderItem.order_id == order_id)
+                .order_by(OrderItem.id.asc())
+                .all()
+            )
+            download_items = [
+                OrderDownloadItemOut(
+                    photo_id=item.photo_id,
+                    proof_url=(
+                        f"{base_url}/d/{delivery.token}/photos/"
+                        f"{quote(item.photo_id, safe='')}/proof"
+                    ),
+                    download_url=(
+                        f"{base_url}/d/{delivery.token}/photos/"
+                        f"{quote(item.photo_id, safe='')}"
+                    ),
+                )
+                for item in items
+            ]
 
-    return OrderOut(id=order.id, status=order.status, download_url=download_url)
+    return OrderOut(
+        id=order.id,
+        status=order.status,
+        download_url=download_url,
+        download_items=download_items,
+    )

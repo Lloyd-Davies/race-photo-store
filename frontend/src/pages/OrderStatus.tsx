@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { CheckCircle2, Download, Loader2, XCircle, Clock } from 'lucide-react'
+import { CheckCircle2, Download, Loader2, XCircle, Clock, ImageIcon } from 'lucide-react'
 import { fetchOrder, type OrderStatus as Status } from '../api/orders'
 import { useCartStore } from '../store/cart'
 import Button from '../components/Button'
+import EmbeddedBrowserWarning from '../components/EmbeddedBrowserWarning'
+import { isEmbeddedInAppBrowser } from '../utils/embeddedBrowser'
 
 const STEP_ORDER: Status[] = ['PENDING', 'PAID', 'BUILDING', 'READY']
 
@@ -93,12 +95,69 @@ export default function OrderStatus() {
     )
   }
 
-  const { status, download_url } = order
+  const { status, download_url, download_items = [] } = order
   const isFinal = status === 'READY' || status === 'FAILED' || status === 'EXPIRED'
   const currentStepIdx = STEP_ORDER.indexOf(status as Status)
+  const isInAppBrowser = isEmbeddedInAppBrowser()
+  const actionLinkClass =
+    'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500'
+  const zipLinkClass =
+    'inline-flex w-full items-center justify-center rounded-md bg-sky-500 px-6 py-2.5 text-base font-medium text-white shadow-sm transition-colors hover:bg-sky-600 active:bg-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500'
+
+  const individualDownloads = status === 'READY' && download_items.length > 0 && (
+    <section className="mt-6">
+      <div className="mb-3 flex items-center gap-2">
+        <ImageIcon size={17} className="text-sky-400" />
+        <h2 className="text-sm font-semibold text-content">Download individual photos</h2>
+      </div>
+      <div className="divide-y divide-surface-700 overflow-hidden rounded-lg border border-surface-700">
+        {download_items.map((item) => (
+          <div key={item.photo_id} className="flex items-center gap-3 bg-surface-800/60 p-3">
+            {item.proof_url ? (
+              <img
+                src={item.proof_url}
+                alt={item.photo_id}
+                className="h-12 w-12 shrink-0 rounded object-cover"
+              />
+            ) : (
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-surface-700 text-content-muted">
+                <ImageIcon size={18} />
+              </div>
+            )}
+            <span className="min-w-0 flex-1 truncate text-sm text-content">{item.photo_id}</span>
+            {item.proof_url && (
+              <a
+                href={item.proof_url}
+                target="_blank"
+                rel="noreferrer"
+                className={`${actionLinkClass} bg-surface-700 text-content hover:bg-surface-600`}
+              >
+                Preview
+              </a>
+            )}
+            <a
+              href={item.download_url}
+              download
+              className={`${actionLinkClass} bg-sky-500 text-white hover:bg-sky-600`}
+            >
+              <Download size={14} className="mr-1.5" />
+              Download
+            </a>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+
+  const zipDownload = status === 'READY' && download_url && (
+    <a href={download_url} download className={zipLinkClass}>
+      <Download size={18} className="mr-2" />
+      Download ZIP
+    </a>
+  )
 
   return (
-    <div className="max-w-md mx-auto px-4 sm:px-6 py-16">
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-16">
       <div className="bg-surface-900 border border-surface-700 rounded-2xl p-8">
         {/* Icon */}
         <div className="flex justify-center mb-6">
@@ -121,6 +180,10 @@ export default function OrderStatus() {
 
         <p className="text-sm text-center text-gray-400 mb-8">Order #{id}</p>
 
+        {status === 'READY' && isInAppBrowser && (
+          <EmbeddedBrowserWarning mode="download" />
+        )}
+
         {/* Progress steps */}
         {!isFinal || status === 'READY' ? (
           <ol className="space-y-3 mb-8">
@@ -142,18 +205,16 @@ export default function OrderStatus() {
           </p>
         )}
 
-        {/* Download button */}
-        {status === 'READY' && download_url && (
-          <a
-            href={download_url}
-            download
-            className="block"
-          >
-            <Button className="w-full" size="lg">
-              <Download size={18} className="mr-2" />
-              Download Photos
-            </Button>
-          </a>
+        {isInAppBrowser ? (
+          <>
+            {individualDownloads}
+            {zipDownload && <div className="mt-6">{zipDownload}</div>}
+          </>
+        ) : (
+          <>
+            {zipDownload}
+            {individualDownloads}
+          </>
         )}
 
         {/* Polling indicator */}

@@ -66,11 +66,12 @@ _DOWNLOAD_READY_HTML = """\
   <p>Your photos from <strong>{{ event_name }}</strong> are ready to download.</p>
   <p><strong>Order reference:</strong> #{{ order_id }}</p>
   <p>
-    <a href="{{ direct_download_url }}" style="background:#2563eb;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;display:inline-block">
-      Download Your Photos
+    <a href="{{ order_status_url }}" style="background:#2563eb;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;display:inline-block">
+      Open Your Order
     </a>
   </p>
-  <p>Or <a href="{{ order_status_url }}">view your order status page</a>.</p>
+  <p>The order page includes the ZIP file and individual photo download links for mobile browsers.</p>
+  <p>Or <a href="{{ direct_download_url }}">download the ZIP directly</a>.</p>
   <p style="font-size:13px;color:#666">
     This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
   </p>
@@ -91,9 +92,9 @@ Your photos from {{ event_name }} are ready to download.
 
 Order reference: #{{ order_id }}
 
-Download your photos: {{ direct_download_url }}
+Open your order: {{ order_status_url }}
 
-Or view your order status: {{ order_status_url }}
+Download the ZIP directly: {{ direct_download_url }}
 
 This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
 
@@ -115,11 +116,12 @@ _DELIVERY_RESET_HTML = """\
   <p>A fresh download link has been issued for your order from <strong>{{ event_name }}</strong>.</p>
   <p><strong>Order reference:</strong> #{{ order_id }}</p>
   <p>
-    <a href="{{ direct_download_url }}" style="background:#2563eb;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;display:inline-block">
-      Download Your Photos
+    <a href="{{ order_status_url }}" style="background:#2563eb;color:#fff;padding:12px 24px;text-decoration:none;border-radius:4px;display:inline-block">
+      Open Your Order
     </a>
   </p>
-  <p>Or <a href="{{ order_status_url }}">view your order status page</a>.</p>
+  <p>The order page includes the ZIP file and individual photo download links for mobile browsers.</p>
+  <p>Or <a href="{{ direct_download_url }}">download the ZIP directly</a>.</p>
   <p style="font-size:13px;color:#666">
     This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
   </p>
@@ -140,9 +142,9 @@ A fresh download link has been issued for your order from {{ event_name }}.
 
 Order reference: #{{ order_id }}
 
-Download your photos: {{ direct_download_url }}
+Open your order: {{ order_status_url }}
 
-Or view your order status: {{ order_status_url }}
+Download the ZIP directly: {{ direct_download_url }}
 
 This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
 

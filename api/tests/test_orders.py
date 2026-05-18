@@ -26,6 +26,7 @@ def test_get_order_pending(client, db_session):
     data = resp.json()
     assert data["status"] == "PENDING"
     assert data["download_url"] is None
+    assert data["download_items"] == []
 
 
 def test_get_order_ready_with_download_url(client, db_session):
@@ -49,6 +50,43 @@ def test_get_order_ready_with_download_url(client, db_session):
     data = resp.json()
     assert data["status"] == "READY"
     assert f"/d/{token}" in data["download_url"]
+    assert data["download_items"] == []
+
+
+def test_get_order_ready_with_download_items(client, db_session, test_photos):
+    from datetime import datetime, timedelta, timezone
+    import uuid
+    from photostore.models import Delivery, OrderItem
+
+    order = _create_order(db_session, OrderStatus.READY)
+    token = str(uuid.uuid4())
+    for photo in test_photos[:2]:
+        db_session.add(
+            OrderItem(order_id=order.id, photo_id=photo.id, unit_price_pence=500)
+        )
+    db_session.add(Delivery(
+        order_id=order.id,
+        token=token,
+        zip_path=f"zips/order-{order.id}.zip",
+        event_slug="test-event",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    ))
+    db_session.flush()
+
+    resp = client.get(f"/api/orders/{order.id}", headers={"X-Order-Access": _order_access(order.id)})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["download_url"].endswith(f"/d/{token}")
+    assert [item["photo_id"] for item in data["download_items"]] == [
+        photo.id for photo in test_photos[:2]
+    ]
+    assert data["download_items"][0]["proof_url"].endswith(
+        f"/d/{token}/photos/{test_photos[0].id}/proof"
+    )
+    assert data["download_items"][0]["download_url"].endswith(
+        f"/d/{token}/photos/{test_photos[0].id}"
+    )
 
 
 def test_get_order_not_found(client):

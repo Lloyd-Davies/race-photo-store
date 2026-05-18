@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from photostore.models import Delivery, Order, OrderStatus
+from photostore.models import Delivery, Order, OrderItem, OrderStatus
 
 
 def _setup_delivery(db_session, tmp_path, max_downloads=5, days_until_expiry=30, download_count=0):
@@ -31,6 +31,42 @@ def _setup_delivery(db_session, tmp_path, max_downloads=5, days_until_expiry=30,
     db_session.add(delivery)
     db_session.flush()
     return delivery
+
+
+def _setup_photo_delivery(
+    db_session,
+    test_photos,
+    max_downloads=5,
+    days_until_expiry=30,
+    download_count=0,
+):
+    order = Order(
+        stripe_session_id=f"cs_test_photo_dl_{uuid.uuid4()}",
+        email="runner@example.com",
+        status=OrderStatus.READY,
+    )
+    db_session.add(order)
+    db_session.flush()
+
+    purchased = test_photos[:2]
+    for photo in purchased:
+        db_session.add(
+            OrderItem(order_id=order.id, photo_id=photo.id, unit_price_pence=500)
+        )
+
+    token = str(uuid.uuid4())
+    delivery = Delivery(
+        order_id=order.id,
+        token=token,
+        zip_path=f"zips/order-{order.id}.zip",
+        event_slug="test-event",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=days_until_expiry),
+        max_downloads=max_downloads,
+        download_count=download_count,
+    )
+    db_session.add(delivery)
+    db_session.flush()
+    return delivery, purchased
 
 
 def test_download_returns_accel_redirect(client, db_session, tmp_path, monkeypatch):
@@ -97,3 +133,89 @@ def test_download_zip_not_ready_returns_409_and_does_not_increment(
 
     db_session.refresh(delivery)
     assert delivery.download_count == 0
+
+
+def test_photo_download_returns_accel_redirect_and_does_not_increment(
+    client, db_session, test_photos
+):
+    delivery, purchased = _setup_photo_delivery(db_session, test_photos)
+
+    resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-accel-redirect"].endswith(
+        f"/test-event/{purchased[0].id}.jpg"
+    )
+    assert resp.headers["content-type"] == "image/jpeg"
+    assert "attachment" in resp.headers["content-disposition"]
+    assert purchased[0].id in resp.headers["content-disposition"]
+
+    db_session.refresh(delivery)
+    assert delivery.download_count == 0
+
+
+def test_photo_download_rejects_unknown_token(client, test_photos):
+    resp = client.get(f"/d/not-a-real-token/photos/{test_photos[0].id}")
+    assert resp.status_code == 404
+
+
+def test_photo_download_rejects_expired_token(client, db_session, test_photos):
+    delivery, purchased = _setup_photo_delivery(
+        db_session,
+        test_photos,
+        days_until_expiry=-1,
+    )
+
+    resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}")
+
+    assert resp.status_code == 410
+
+
+def test_photo_download_rejects_download_limit_reached(
+    client, db_session, test_photos
+):
+    delivery, purchased = _setup_photo_delivery(
+        db_session,
+        test_photos,
+        max_downloads=3,
+        download_count=3,
+    )
+
+    resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}")
+
+    assert resp.status_code == 410
+
+
+def test_photo_download_rejects_photo_not_purchased(
+    client, db_session, test_photos
+):
+    delivery, _ = _setup_photo_delivery(db_session, test_photos)
+
+    resp = client.get(f"/d/{delivery.token}/photos/{test_photos[2].id}")
+
+    assert resp.status_code == 404
+
+
+def test_photo_download_missing_original_returns_404(client, db_session, test_photos):
+    from pathlib import Path
+    from photostore.config import settings
+
+    delivery, purchased = _setup_photo_delivery(db_session, test_photos)
+    original = Path(settings.STORAGE_ROOT) / purchased[0].original_path
+    original.unlink()
+
+    resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}")
+
+    assert resp.status_code == 404
+
+
+def test_photo_proof_download_returns_accel_redirect(client, db_session, test_photos):
+    delivery, purchased = _setup_photo_delivery(db_session, test_photos)
+
+    resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}/proof")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-accel-redirect"].endswith(
+        f"/test-event/{purchased[0].id}.jpg"
+    )
+    assert resp.headers["content-type"] == "image/jpeg"
