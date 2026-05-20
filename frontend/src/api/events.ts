@@ -11,6 +11,11 @@ export interface Event {
   access_hint?: string
   public_until?: string
   archive_after?: string
+  photo_price_pence?: number | null
+  effective_photo_price_pence: number
+  currency: string
+  photo_count?: number
+  order_count?: number
 }
 
 export interface Photo {
@@ -55,6 +60,8 @@ export interface DeleteEventResult {
 
 export const fetchEvents = () => apiGet<Event[]>('/events')
 
+export const fetchAdminEvents = () => apiGet<Event[]>('/admin/events')
+
 export const fetchPhotos = (
   eventId: number,
   page = 1,
@@ -84,6 +91,7 @@ export const createEvent = (body: {
   is_password_protected?: boolean
   access_secret?: string
   access_hint?: string
+  photo_price_pence?: number
 }) =>
   apiPost<EventCreatedOut>('/admin/events', body)
 
@@ -100,6 +108,8 @@ export const updateEvent = (
     access_secret?: string
     clear_access_secret?: boolean
     access_hint?: string | null
+    photo_price_pence?: number | null
+    clear_photo_price?: boolean
   }
 ) => apiPatch<EventCreatedOut>(`/admin/events/${eventId}`, body)
 
@@ -109,7 +119,7 @@ export const ingestPhotos = (eventId: number) =>
 export const uploadBibTags = (eventId: number, tags: { photo_id: string; bib: string; confidence?: number }[]) =>
   apiPost<BibTagsResult>(`/admin/events/${eventId}/tags/bibs`, { tags })
 
-export const listAdminEvents = () => apiGet<EventCreatedOut[]>('/admin/events')
+export const listAdminEvents = () => apiGet<Event[]>('/admin/events')
 
 export const deleteEvent = (
   eventId: number,

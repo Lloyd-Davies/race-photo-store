@@ -16,10 +16,15 @@ from app.deps import get_db, require_admin
 from app.event_access import hash_event_password
 from app.rate_limit import enforce_rate_limit
 from app.schemas import (
+    AdminCheckoutSettingsUpdate,
+    AdminEventOut,
     AdminLoginRequest,
     AdminEmailConfigOut,
     AdminEmailTestRequest,
     AdminEmailTestOut,
+    AdminOrderDetailOut,
+    AdminOrderItemOut,
+    AdminSettingsOut,
     AdminSendEmailRequest,
     AdminStatsOut,
     AdminRefreshRequest,
@@ -46,6 +51,7 @@ from photostore.models import (
     Delivery, Event, EventStatus, Order, OrderItem, OrderStatus,
     Photo, PhotoState, PhotoTag,
 )
+from photostore.pricing import effective_photo_price_pence, get_app_settings, normalize_currency
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -95,6 +101,10 @@ def _extract_captured_at(image_path: Path) -> datetime | None:
         return None
 
 
+def _order_subtotal_pence(order: Order) -> int:
+    return sum(max(0, item.unit_price_pence - item.discount_applied_pence) for item in order.items)
+
+
 def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None) -> AdminOrderOut:
     return AdminOrderOut(
         id=order.id,
@@ -103,6 +113,8 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
         created_at=order.created_at,
         paid_at=order.paid_at,
         item_count=item_count,
+        subtotal_pence=_order_subtotal_pence(order),
+        currency=order.currency or "GBP",
         event_slug=delivery.event_slug if delivery else None,
         download_count=delivery.download_count if delivery else None,
         max_downloads=delivery.max_downloads if delivery else None,
@@ -159,11 +171,42 @@ def verify_admin_session() -> dict:
     return {"ok": True}
 
 
-@router.get("/events", response_model=list[EventCreatedOut], dependencies=[Depends(require_admin)])
-def list_admin_events(db: Session = Depends(get_db)) -> list[EventCreatedOut]:
-    """Return all events regardless of status (admin view), newest first by ID."""
+@router.get("/events", response_model=list[AdminEventOut], dependencies=[Depends(require_admin)])
+def list_admin_events(db: Session = Depends(get_db)) -> list[AdminEventOut]:
+    """Return all events regardless of public visibility, newest first by ID."""
+    app_settings = get_app_settings(db)
     events = db.query(Event).order_by(Event.id.desc()).all()
-    return [EventCreatedOut(id=e.id, slug=e.slug) for e in events]
+    result: list[AdminEventOut] = []
+    for event in events:
+        photo_count = db.query(Photo).filter(Photo.event_id == event.id).count()
+        order_count = (
+            db.query(Order)
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .join(Photo, Photo.id == OrderItem.photo_id)
+            .filter(Photo.event_id == event.id)
+            .distinct()
+            .count()
+        )
+        result.append(
+            AdminEventOut(
+                id=event.id,
+                slug=event.slug,
+                name=event.name,
+                date=event.date,
+                location=event.location,
+                status=event.status,
+                is_password_protected=event.is_password_protected,
+                access_hint=event.access_hint,
+                public_until=event.public_until,
+                archive_after=event.archive_after,
+                photo_price_pence=event.photo_price_pence,
+                effective_photo_price_pence=effective_photo_price_pence(event, app_settings),
+                currency=app_settings.currency,
+                photo_count=photo_count,
+                order_count=order_count,
+            )
+        )
+    return result
 
 
 @router.post("/events", response_model=EventCreatedOut, dependencies=[Depends(require_admin)])
@@ -174,6 +217,8 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
     access_secret = (req.access_secret or req.access_password or "").strip()
     if req.is_password_protected and not access_secret:
         raise HTTPException(400, "Protected events require an access secret")
+    if req.photo_price_pence is not None and req.photo_price_pence <= 0:
+        raise HTTPException(400, "photo_price_pence must be greater than 0")
 
     event = Event(
         slug=req.slug,
@@ -183,6 +228,7 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
         is_password_protected=req.is_password_protected,
         access_password_hash=(hash_event_password(access_secret) if req.is_password_protected and access_secret else None),
         access_hint=(req.access_hint if req.is_password_protected else None),
+        photo_price_pence=req.photo_price_pence,
     )
     db.add(event)
     db.commit()
@@ -209,9 +255,16 @@ def update_event(
     access_password = payload.pop("access_password", None)
     clear_access_secret = payload.pop("clear_access_secret", False)
     clear_access_password = payload.pop("clear_access_password", False)
+    clear_photo_price = payload.pop("clear_photo_price", False)
+
+    if payload.get("photo_price_pence") is not None and payload["photo_price_pence"] <= 0:
+        raise HTTPException(400, "photo_price_pence must be greater than 0")
 
     for field, value in payload.items():
         setattr(event, field, value)
+
+    if clear_photo_price:
+        event.photo_price_pence = None
 
     if clear_access_secret or clear_access_password:
         event.access_password_hash = None
@@ -246,6 +299,70 @@ def get_admin_stats(db: Session = Depends(get_db)) -> AdminStatsOut:
         failed_orders=db.query(Order).filter(Order.status == OrderStatus.FAILED).count(),
         active_events=db.query(Event).filter(Event.status == EventStatus.ACTIVE).count(),
     )
+
+
+def _email_config_out() -> AdminEmailConfigOut:
+    return AdminEmailConfigOut(
+        email_enabled=settings.EMAIL_ENABLED,
+        provider=settings.EMAIL_PROVIDER,
+        from_address=settings.EMAIL_FROM_ADDRESS,
+        from_name=settings.EMAIL_FROM_NAME,
+        brevo_key_set=bool(settings.BREVO_API_KEY),
+        support_email=settings.SUPPORT_EMAIL,
+        order_email_required=settings.ORDER_EMAIL_REQUIRED,
+    )
+
+
+@router.get("/settings", response_model=AdminSettingsOut, dependencies=[Depends(require_admin)])
+def get_admin_settings(db: Session = Depends(get_db)) -> AdminSettingsOut:
+    app_settings = get_app_settings(db)
+    return AdminSettingsOut(
+        checkout={
+            "default_photo_price_pence": app_settings.default_photo_price_pence,
+            "currency": app_settings.currency,
+            "allow_stripe_promotion_codes": app_settings.allow_stripe_promotion_codes,
+        },
+        stripe_secret_key_set=bool(settings.STRIPE_SECRET_KEY),
+        stripe_webhook_secret_set=bool(settings.STRIPE_WEBHOOK_SECRET),
+        public_base_url=settings.PUBLIC_BASE_URL,
+        site_name=settings.SITE_NAME,
+        site_tagline=settings.SITE_TAGLINE,
+        email=_email_config_out(),
+    )
+
+
+@router.patch(
+    "/settings/checkout",
+    response_model=AdminSettingsOut,
+    dependencies=[Depends(require_admin)],
+)
+def update_checkout_settings(
+    req: AdminCheckoutSettingsUpdate,
+    db: Session = Depends(get_db),
+) -> AdminSettingsOut:
+    app_settings = get_app_settings(db)
+    payload = req.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(400, "No fields supplied")
+
+    if "default_photo_price_pence" in payload:
+        price = payload["default_photo_price_pence"]
+        if price is None or price <= 0:
+            raise HTTPException(400, "default_photo_price_pence must be greater than 0")
+        app_settings.default_photo_price_pence = price
+
+    if "currency" in payload:
+        currency = normalize_currency(payload["currency"] or "")
+        if not re.fullmatch(r"[A-Z]{3}", currency):
+            raise HTTPException(400, "currency must be a 3-letter ISO currency code")
+        app_settings.currency = currency
+
+    if "allow_stripe_promotion_codes" in payload:
+        app_settings.allow_stripe_promotion_codes = bool(payload["allow_stripe_promotion_codes"])
+
+    db.commit()
+    db.refresh(app_settings)
+    return get_admin_settings(db)
 
 
 @router.get(
@@ -637,6 +754,33 @@ def list_orders(
     return AdminOrderListOut(orders=result)
 
 
+@router.get("/orders/{order_id}", response_model=AdminOrderDetailOut, dependencies=[Depends(require_admin)])
+def get_order_detail(order_id: int, db: Session = Depends(get_db)) -> AdminOrderDetailOut:
+    order = (
+        db.query(Order)
+        .options(joinedload(Order.items))
+        .filter(Order.id == order_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
+    base = _to_admin_order_out(order, len(order.items), delivery)
+    return AdminOrderDetailOut(
+        **base.model_dump(),
+        items=[
+            AdminOrderItemOut(
+                photo_id=item.photo_id,
+                unit_price_pence=item.unit_price_pence,
+                discount_applied_pence=item.discount_applied_pence,
+                line_total_pence=max(0, item.unit_price_pence - item.discount_applied_pence),
+            )
+            for item in sorted(order.items, key=lambda i: i.id)
+        ],
+    )
+
+
 @router.post(
     "/orders/{order_id}/reset-delivery",
     response_model=AdminOrderOut,
@@ -814,15 +958,7 @@ def send_communication(
 @router.get("/email/config", response_model=AdminEmailConfigOut, dependencies=[Depends(require_admin)])
 def get_email_config() -> AdminEmailConfigOut:
     """Return current email configuration as seen by the running process."""
-    return AdminEmailConfigOut(
-        email_enabled=settings.EMAIL_ENABLED,
-        provider=settings.EMAIL_PROVIDER,
-        from_address=settings.EMAIL_FROM_ADDRESS,
-        from_name=settings.EMAIL_FROM_NAME,
-        brevo_key_set=bool(settings.BREVO_API_KEY),
-        support_email=settings.SUPPORT_EMAIL,
-        order_email_required=settings.ORDER_EMAIL_REQUIRED,
-    )
+    return _email_config_out()
 
 
 @router.post("/email/test", response_model=AdminEmailTestOut, dependencies=[Depends(require_admin)])

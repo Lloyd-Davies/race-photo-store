@@ -73,6 +73,7 @@ class Event(Base):
     access_hint = Column(String)
     public_until = Column(DateTime(timezone=True))
     archive_after = Column(DateTime(timezone=True))
+    photo_price_pence = Column(Integer)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     photos = relationship("Photo", back_populates="event")
@@ -126,6 +127,7 @@ class Order(Base):
     stripe_payment_intent_id = Column(String)
     email = Column(String, nullable=False)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.PENDING)
+    currency = Column(String, nullable=False, default="GBP")
     created_at = Column(DateTime(timezone=True), default=utcnow)
     paid_at = Column(DateTime(timezone=True))
 
@@ -192,3 +194,14 @@ class Communication(Base):
         Index("ix_communications_order_id_kind", "order_id", "kind"),
         # Partial unique index on dedupe_key (non-null only) — enforced via migration DDL
     )
+
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True)
+    default_photo_price_pence = Column(Integer, nullable=False, default=500)
+    currency = Column(String, nullable=False, default="GBP")
+    allow_stripe_promotion_codes = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

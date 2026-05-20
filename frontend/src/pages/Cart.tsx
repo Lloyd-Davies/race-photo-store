@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Trash2, ArrowLeft, Mail } from 'lucide-react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useCartStore } from '../store/cart'
 import { createCart } from '../api/cart'
 import { createCheckout } from '../api/cart'
 import Button from '../components/Button'
+import { fetchEvents } from '../api/events'
+import { formatMoney } from '../utils/money'
+import { useSiteConfig } from '../context/SiteConfig'
 import EmbeddedBrowserWarning from '../components/EmbeddedBrowserWarning'
 import { isEmbeddedInAppBrowser } from '../utils/embeddedBrowser'
 
@@ -16,6 +19,11 @@ export default function Cart() {
   const clear = useCartStore((s) => s.clear)
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const siteConfig = useSiteConfig()
+  const { data: events } = useQuery({ queryKey: ['events'], queryFn: fetchEvents })
+  const event = events?.find((e) => e.id === eventId)
+  const unitPrice = event?.effective_photo_price_pence
+  const subtotal = unitPrice ? items.length * unitPrice : 0
   const isInAppBrowser = isEmbeddedInAppBrowser()
 
   const checkoutMut = useMutation({
@@ -84,6 +92,11 @@ export default function Cart() {
               className="w-16 h-16 object-cover rounded"
             />
             <span className="flex-1 text-sm text-gray-300 truncate">{item.photoId}</span>
+            {event && (
+              <span className="text-xs text-content-muted">
+                {formatMoney(event.effective_photo_price_pence, event.currency)}
+              </span>
+            )}
             <button
               onClick={() => remove(item.photoId)}
               className="text-gray-500 hover:text-red-400 transition-colors"
@@ -94,6 +107,28 @@ export default function Cart() {
           </div>
         ))}
       </div>
+
+      {event && (
+        <div className="bg-surface-900 border border-surface-700 rounded-lg px-4 py-3 mb-6 space-y-1 text-sm">
+          <div className="flex justify-between">
+            <span className="text-content-muted">Unit price</span>
+            <span className="text-content">{formatMoney(event.effective_photo_price_pence, event.currency)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-content-muted">Photos</span>
+            <span className="text-content">{items.length}</span>
+          </div>
+          <div className="flex justify-between font-semibold">
+            <span className="text-content">Subtotal</span>
+            <span className="text-content">{formatMoney(subtotal, event.currency)}</span>
+          </div>
+          {siteConfig.allow_stripe_promotion_codes && (
+            <p className="text-xs text-content-muted">
+              Promotion codes can be applied on Stripe's secure checkout page.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Email */}
       <div className="mb-6">

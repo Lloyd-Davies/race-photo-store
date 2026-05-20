@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { ArrowLeft, Play, Upload, CheckCircle2, XCircle } from 'lucide-react'
-import { fetchEvents, ingestPhotos, uploadBibTags, type IngestResult, type BibTagsResult } from '../../api/events'
+import { fetchAdminEvents, ingestPhotos, uploadBibTags, type IngestResult, type BibTagsResult } from '../../api/events'
 import Button from '../../components/Button'
 
 type BibTagUploadRow = { photo_id: string; bib: string; confidence?: number }
@@ -111,7 +111,7 @@ export default function AdminIngest() {
   const [bibResult, setBibResult] = useState<BibTagsResult | null>(null)
   const [bibError, setBibError] = useState<string | null>(null)
 
-  const { data: events } = useQuery({ queryKey: ['events'], queryFn: fetchEvents })
+  const { data: events } = useQuery({ queryKey: ['admin-events'], queryFn: fetchAdminEvents })
   const event = events?.find((e) => e.id === id)
 
   const ingestMut = useMutation({

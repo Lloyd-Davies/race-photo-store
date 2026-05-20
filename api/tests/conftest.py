@@ -24,7 +24,6 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("STORAGE_ROOT", "/tmp/photostore-test")
 os.environ.setdefault("STRIPE_SECRET_KEY", "")
 os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "")
-os.environ.setdefault("STRIPE_PRICE_ID", "")
 os.environ.setdefault("PUBLIC_BASE_URL", "http://testserver")
 os.environ.setdefault("ADMIN_TOKEN", "test-admin-token")
 os.environ.setdefault("EMAIL_ENABLED", "false")
@@ -196,7 +195,7 @@ def test_cart(db_session, test_event, test_photos):
 
 @pytest.fixture()
 def mock_stripe(test_cart):
-    """Patches stripe.Price.retrieve and stripe.checkout.Session.create."""
+    """Patches Stripe checkout/webhook calls."""
     fake_session = MagicMock()
     fake_session.id = "cs_test_fakesessionid"
     fake_session.url = "https://checkout.stripe.com/test"
@@ -205,13 +204,11 @@ def mock_stripe(test_cart):
     fake_price.unit_amount = 500  # £5.00
 
     with (
-        patch("stripe.Price.retrieve", return_value=fake_price),
         patch("stripe.checkout.Session.create", return_value=fake_session),
         patch("stripe.Webhook.construct_event") as mock_construct,
     ):
         yield {
             "session": fake_session,
-            "price": fake_price,
             "construct_event": mock_construct,
         }
 

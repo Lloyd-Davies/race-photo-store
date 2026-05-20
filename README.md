@@ -68,7 +68,7 @@ sudo chown -R $USER:$USER /mnt/pstore
 3) Optional but recommended:
 
 - `ADMIN_SESSION_SECRET`
-- Stripe vars (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`)
+- Stripe vars (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)
 - Email vars (`EMAIL_ENABLED`, `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS`, `SUPPORT_EMAIL`)
 
 4) Deploy `docker-compose.yml` (Portainer or Docker), then verify:
@@ -113,6 +113,8 @@ Admin:
 - `POST /api/admin/events/{id}/ingest`
 - `POST /api/admin/events/{id}/tags/bibs`
 - `GET /api/admin/orders`
+- `GET /api/admin/orders/{id}`
+- `GET /api/admin/settings`
 
 ## Configuration
 
@@ -126,6 +128,10 @@ Primary env vars:
 | `ADMIN_SESSION_SECRET` | Signing key for admin/event/order access tokens |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare tunnel connector token |
 | `IMAGE_TAG` | GHCR image tag to deploy; use a pinned release tag in production |
+
+Checkout pricing is managed in Admin Settings. Events can inherit the global
+photo price or define their own override. Stripe promotion codes are managed in
+Stripe and can be enabled for Checkout from Admin Settings.
 
 Email env vars:
 

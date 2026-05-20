@@ -1,8 +1,11 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { X, ShoppingCart, Trash2 } from 'lucide-react'
 import { useCartStore } from '../store/cart'
 import Button from './Button'
+import { fetchEvents } from '../api/events'
+import { formatMoney } from '../utils/money'
 
 interface CartDrawerProps {
   open: boolean
@@ -11,9 +14,13 @@ interface CartDrawerProps {
 
 export default function CartDrawer({ open, onClose }: CartDrawerProps) {
   const items = useCartStore((s) => s.items)
+  const eventId = useCartStore((s) => s.eventId)
   const remove = useCartStore((s) => s.remove)
   const clear = useCartStore((s) => s.clear)
   const navigate = useNavigate()
+  const { data: events } = useQuery({ queryKey: ['events'], queryFn: fetchEvents })
+  const event = events?.find((e) => e.id === eventId)
+  const subtotal = event ? items.length * event.effective_photo_price_pence : 0
 
   // Trap scroll when open
   useEffect(() => {
@@ -92,6 +99,12 @@ export default function CartDrawer({ open, onClose }: CartDrawerProps) {
         {/* Footer actions */}
         {items.length > 0 && (
           <div className="p-4 border-t border-surface-700 space-y-2 shrink-0">
+            {event && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-content-muted">Subtotal</span>
+                <span className="font-medium text-content">{formatMoney(subtotal, event.currency)}</span>
+              </div>
+            )}
             <Button
               className="w-full"
               onClick={() => { onClose(); navigate('/cart') }}

@@ -8,6 +8,7 @@ import PhotoCard from '../components/PhotoCard'
 import { PhotoSkeleton } from '../components/Skeleton'
 import Button from '../components/Button'
 import type { Photo } from '../api/events'
+import { formatMoney } from '../utils/money'
 
 export default function EventGallery() {
   const { eventId } = useParams<{ eventId: string }>()
@@ -112,7 +113,14 @@ export default function EventGallery() {
         <div>
           <h1 className="text-xl font-bold text-content">{event?.name ?? 'Gallery'}</h1>
           {data && (
-            <p className="text-sm text-gray-400 mt-0.5">{data.total} photos</p>
+            <p className="text-sm text-gray-400 mt-0.5">
+              {data.total} photos
+              {event && (
+                <span className="ml-2 text-content-muted">
+                  {formatMoney(event.effective_photo_price_pence, event.currency)} each
+                </span>
+              )}
+            </p>
           )}
         </div>
 
@@ -169,6 +177,7 @@ export default function EventGallery() {
               <Button size="sm">
                 <ShoppingCart size={14} className="mr-1" />
                 {cartCount} selected
+                {event && ` - ${formatMoney(cartCount * event.effective_photo_price_pence, event.currency)}`}
               </Button>
             </Link>
           )}

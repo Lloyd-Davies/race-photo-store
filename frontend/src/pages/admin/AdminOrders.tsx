@@ -11,6 +11,7 @@ import {
   type AdminOrder,
 } from '../../api/adminOrders'
 import type { OrderStatus } from '../../api/orders'
+import { formatMoney } from '../../utils/money'
 
 const ORDER_STATUSES: Array<OrderStatus | 'ALL'> = [
   'ALL',
@@ -131,6 +132,7 @@ export default function AdminOrders() {
               <p className="text-content-muted">Email: <span className="text-content">{order.email || '—'}</span></p>
               <p className="text-content-muted">Event: <span className="text-content">{order.event_slug || '—'}</span></p>
               <p className="text-content-muted">Items: <span className="text-content">{order.item_count}</span></p>
+              <p className="text-content-muted">Subtotal: <span className="text-content">{formatMoney(order.subtotal_pence, order.currency)}</span></p>
               <p className="text-content-muted">
                 Downloads: <span className="text-content">{order.download_count ?? '—'} / {order.max_downloads ?? '—'}</span>
               </p>

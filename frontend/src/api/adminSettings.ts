@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPatch, apiPost } from './client'
 
 export interface EmailConfig {
   email_enabled: boolean
@@ -18,8 +18,30 @@ export interface EmailTestResult {
   message: string
 }
 
+export interface CheckoutSettings {
+  default_photo_price_pence: number
+  currency: string
+  allow_stripe_promotion_codes: boolean
+}
+
+export interface AdminSettings {
+  checkout: CheckoutSettings
+  stripe_secret_key_set: boolean
+  stripe_webhook_secret_set: boolean
+  public_base_url: string
+  site_name: string
+  site_tagline: string
+  email: EmailConfig
+}
+
 export const fetchEmailConfig = () =>
   apiGet<EmailConfig>('/admin/email/config')
 
 export const sendTestEmail = (to_email: string) =>
   apiPost<EmailTestResult>('/admin/email/test', { to_email })
+
+export const fetchAdminSettings = () =>
+  apiGet<AdminSettings>('/admin/settings')
+
+export const updateCheckoutSettings = (body: Partial<CheckoutSettings>) =>
+  apiPatch<AdminSettings>('/admin/settings/checkout', body)

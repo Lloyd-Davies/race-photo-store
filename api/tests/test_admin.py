@@ -222,6 +222,26 @@ def test_update_event_fields(admin_client, db_session, test_event):
     assert refreshed.status.value == "ARCHIVED"
 
 
+def test_update_event_price_override_and_clear(admin_client, db_session, test_event):
+    from photostore.models import Event
+
+    resp = admin_client.patch(
+        f"/api/admin/events/{test_event.id}",
+        json={"photo_price_pence": 650},
+    )
+    assert resp.status_code == 200
+    refreshed = db_session.query(Event).filter(Event.id == test_event.id).first()
+    assert refreshed.photo_price_pence == 650
+
+    resp = admin_client.patch(
+        f"/api/admin/events/{test_event.id}",
+        json={"clear_photo_price": True},
+    )
+    assert resp.status_code == 200
+    db_session.refresh(refreshed)
+    assert refreshed.photo_price_pence is None
+
+
 def test_update_event_protection_requires_password(admin_client, test_event):
     resp = admin_client.patch(
         f"/api/admin/events/{test_event.id}",
@@ -331,7 +351,22 @@ def test_admin_list_orders(admin_client, db_session, test_photos):
     resp = admin_client.get("/api/admin/orders")
     assert resp.status_code == 200
     data = resp.json()["orders"]
-    assert any(item["id"] == order.id for item in data)
+    found = next(item for item in data if item["id"] == order.id)
+    assert found["subtotal_pence"] == 1500
+    assert found["currency"] == "GBP"
+
+
+def test_admin_get_order_detail_returns_items_and_totals(admin_client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.get(f"/api/admin/orders/{order.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == order.id
+    assert data["subtotal_pence"] == 1500
+    assert len(data["items"]) == 3
+    assert {item["unit_price_pence"] for item in data["items"]} == {500}
+    assert {item["line_total_pence"] for item in data["items"]} == {500}
 
 
 def test_admin_reset_delivery_rotates_and_resets(admin_client, db_session, test_photos):
@@ -417,6 +452,9 @@ def test_list_admin_events_returns_all_statuses(admin_client, db_session, test_e
     slugs = [e["slug"] for e in resp.json()]
     assert test_event.slug in slugs
     assert "archived-5k" in slugs
+    current = next(e for e in resp.json() if e["slug"] == test_event.slug)
+    assert current["effective_photo_price_pence"] == 500
+    assert current["currency"] == "GBP"
 
 
 def test_list_admin_events_requires_admin(client):
@@ -868,6 +906,37 @@ def test_email_config_returns_current_settings(admin_client, monkeypatch):
     assert data["email_enabled"] is True
     assert data["brevo_key_set"] is True
     assert data["from_address"] == "from@example.com"
+
+
+def test_admin_settings_checkout_update(admin_client, db_session):
+    resp = admin_client.patch(
+        "/api/admin/settings/checkout",
+        json={
+            "default_photo_price_pence": 875,
+            "currency": "gbp",
+            "allow_stripe_promotion_codes": True,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["checkout"]["default_photo_price_pence"] == 875
+    assert data["checkout"]["currency"] == "GBP"
+    assert data["checkout"]["allow_stripe_promotion_codes"] is True
+
+    from photostore.pricing import get_app_settings
+
+    stored = get_app_settings(db_session)
+    assert stored.default_photo_price_pence == 875
+    assert stored.currency == "GBP"
+    assert stored.allow_stripe_promotion_codes is True
+
+
+def test_admin_settings_rejects_invalid_checkout_price(admin_client):
+    resp = admin_client.patch(
+        "/api/admin/settings/checkout",
+        json={"default_photo_price_pence": 0},
+    )
+    assert resp.status_code == 400
 
 
 def test_email_test_disabled_returns_not_sent(admin_client, monkeypatch):

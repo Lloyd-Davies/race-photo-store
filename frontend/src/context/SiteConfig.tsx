@@ -4,6 +4,7 @@ import { fetchSiteConfig, type SiteConfig } from '../api/siteConfig'
 const DEFAULT: SiteConfig = {
   site_name: 'Race Photos',
   site_tagline: 'Your race, your photos.',
+  allow_stripe_promotion_codes: false,
 }
 
 const SiteConfigContext = createContext<SiteConfig>(DEFAULT)

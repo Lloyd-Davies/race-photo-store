@@ -5,6 +5,7 @@ import { ArrowLeft, Ban, ClipboardCopy, Link2, Mail, RefreshCw, RotateCcw } from
 import Button from '../../components/Button'
 import {
   expireAdminOrderDelivery,
+  fetchAdminOrder,
   fetchOrderCommunications,
   rebuildAdminOrderZip,
   resetAdminOrderDelivery,
@@ -13,6 +14,7 @@ import {
   type CommunicationKind,
 } from '../../api/adminOrders'
 import type { OrderStatus } from '../../api/orders'
+import { formatMoney } from '../../utils/money'
 
 const COMM_KINDS: CommunicationKind[] = ['ORDER_CONFIRMED', 'DOWNLOAD_READY', 'DELIVERY_RESET']
 
@@ -144,16 +146,7 @@ export default function AdminOrderDetail() {
 
   const orderData = useQuery({
     queryKey: ['admin-order', id],
-    queryFn: async () => {
-      const list = await queryClient.fetchQuery({
-        queryKey: ['admin-orders'],
-        queryFn: () => import('../../api/adminOrders').then((m) => m.fetchAdminOrders({ limit: 500 })),
-        staleTime: 30_000,
-      })
-      const found = list.orders.find((o) => o.id === id)
-      if (!found) throw new Error('Order not found')
-      return found
-    },
+    queryFn: () => fetchAdminOrder(id),
   })
 
   const commsQuery = useQuery({
@@ -196,6 +189,7 @@ export default function AdminOrderDetail() {
             <p className="text-content-muted">Email: <span className="text-content">{order.email || '—'}</span></p>
             <p className="text-content-muted">Event: <span className="text-content">{order.event_slug || '—'}</span></p>
             <p className="text-content-muted">Items: <span className="text-content">{order.item_count}</span></p>
+            <p className="text-content-muted">Subtotal: <span className="text-content">{formatMoney(order.subtotal_pence, order.currency)}</span></p>
             <p className="text-content-muted">
               Downloads: <span className="text-content">{order.download_count ?? '—'} / {order.max_downloads ?? '—'}</span>
             </p>
@@ -214,6 +208,28 @@ export default function AdminOrderDetail() {
             )}
           </div>
           <OrderActions order={order} />
+        </div>
+      )}
+
+      {order && (
+        <div className="bg-surface-900 border border-surface-700 rounded-xl mb-6 overflow-hidden">
+          <div className="px-4 py-3 border-b border-surface-700 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-content">Order items</h2>
+            <span className="text-sm font-medium text-content">{formatMoney(order.subtotal_pence, order.currency)}</span>
+          </div>
+          <div className="divide-y divide-surface-700">
+            {order.items.map((item) => (
+              <div key={item.photo_id} className="px-4 py-3 grid grid-cols-[1fr_auto] gap-3 text-sm">
+                <span className="text-content font-mono truncate">{item.photo_id}</span>
+                <span className="text-content">{formatMoney(item.line_total_pence, order.currency)}</span>
+                {item.discount_applied_pence > 0 && (
+                  <span className="text-xs text-content-muted col-span-2">
+                    Unit {formatMoney(item.unit_price_pence, order.currency)} minus {formatMoney(item.discount_applied_pence, order.currency)} discount
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

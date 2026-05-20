@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { CalendarDays, MapPin, ImageOff } from 'lucide-react'
 import { fetchEvents, type Event } from '../api/events'
 import { Skeleton } from '../components/Skeleton'
+import { formatMoney } from '../utils/money'
 
 function EventCard({ event }: { event: Event }) {
   const date = new Date(event.date).toLocaleDateString('en-GB', {
@@ -42,6 +43,9 @@ function EventCard({ event }: { event: Event }) {
               {event.location}
             </div>
           )}
+          <div className="text-content-muted">
+            {formatMoney(event.effective_photo_price_pence, event.currency)} per photo
+          </div>
         </div>
       </div>
     </Link>

@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, UploadCloud, CalendarDays, MapPin, Pencil, Trash2 } from 'lucide-react'
-import { fetchEvents, createEvent, updateEvent, deleteEvent, type Event } from '../../api/events'
+import { fetchAdminEvents, createEvent, updateEvent, deleteEvent, type Event } from '../../api/events'
 import Button from '../../components/Button'
 import { Skeleton } from '../../components/Skeleton'
+import { formatMoney } from '../../utils/money'
 
 interface CreateForm {
   slug: string
@@ -14,6 +15,8 @@ interface CreateForm {
   is_password_protected: boolean
   access_secret: string
   access_hint: string
+  override_price: boolean
+  photo_price_pounds: string
 }
 
 const EMPTY_FORM: CreateForm = {
@@ -24,6 +27,8 @@ const EMPTY_FORM: CreateForm = {
   is_password_protected: false,
   access_secret: '',
   access_hint: '',
+  override_price: false,
+  photo_price_pounds: '',
 }
 
 interface EditForm {
@@ -35,6 +40,8 @@ interface EditForm {
   access_hint: string
   access_secret: string
   clear_access_secret: boolean
+  override_price: boolean
+  photo_price_pounds: string
 }
 
 function slugify(v: string) {
@@ -57,8 +64,8 @@ export default function AdminEvents() {
   const [forceConfirmed, setForceConfirmed] = useState(false)
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ['events'],
-    queryFn: fetchEvents,
+    queryKey: ['admin-events'],
+    queryFn: fetchAdminEvents,
   })
 
   const createMut = useMutation({
@@ -71,8 +78,10 @@ export default function AdminEvents() {
         is_password_protected: form.is_password_protected,
         access_secret: form.is_password_protected ? form.access_secret || undefined : undefined,
         access_hint: form.is_password_protected ? form.access_hint || undefined : undefined,
+        photo_price_pence: form.override_price ? Math.round(Number(form.photo_price_pounds) * 100) : undefined,
       }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-events'] })
       qc.invalidateQueries({ queryKey: ['events'] })
       setForm(EMPTY_FORM)
       setShowForm(false)
@@ -90,8 +99,11 @@ export default function AdminEvents() {
         access_hint: body.is_password_protected ? body.access_hint || undefined : null,
         access_secret: body.access_secret || undefined,
         clear_access_secret: body.clear_access_secret || undefined,
+        photo_price_pence: body.override_price ? Math.round(Number(body.photo_price_pounds) * 100) : undefined,
+        clear_photo_price: !body.override_price || undefined,
       }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-events'] })
       qc.invalidateQueries({ queryKey: ['events'] })
       setEditingEventId(null)
       setEditForm(null)
@@ -102,6 +114,7 @@ export default function AdminEvents() {
     mutationFn: ({ eventId, opts }: { eventId: number; opts: { deleteFiles: boolean; force: boolean } }) =>
       deleteEvent(eventId, opts),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-events'] })
       qc.invalidateQueries({ queryKey: ['events'] })
       closeDeleteModal()
     },
@@ -146,7 +159,7 @@ export default function AdminEvents() {
     deleteMut.mutate({ eventId: deleteTarget.id, opts: { deleteFiles, force: forceConfirmed } })
   }
 
-  function handleField(field: 'slug' | 'name' | 'date' | 'location' | 'access_secret' | 'access_hint', value: string) {
+  function handleField(field: 'slug' | 'name' | 'date' | 'location' | 'access_secret' | 'access_hint' | 'photo_price_pounds', value: string) {
     setForm((prev) => {
       const next = { ...prev, [field]: value }
       // Auto-fill slug from name
@@ -167,6 +180,9 @@ export default function AdminEvents() {
     if (form.is_password_protected && !form.access_secret.trim()) {
       errs.access_secret = 'Required for protected events'
     }
+    if (form.override_price && (!form.photo_price_pounds || Number(form.photo_price_pounds) <= 0)) {
+      errs.photo_price_pounds = 'Enter a price greater than 0'
+    }
     if (Object.keys(errs).length) { setErrors(errs); return }
     createMut.mutate()
   }
@@ -182,11 +198,14 @@ export default function AdminEvents() {
       access_hint: event.access_hint ?? '',
       access_secret: '',
       clear_access_secret: false,
+      override_price: event.photo_price_pence !== null && event.photo_price_pence !== undefined,
+      photo_price_pounds: event.photo_price_pence ? (event.photo_price_pence / 100).toFixed(2) : '',
     })
   }
 
   function saveEdit(eventId: number) {
     if (!editForm || !editForm.name || !editForm.date) return
+    if (editForm.override_price && (!editForm.photo_price_pounds || Number(editForm.photo_price_pounds) <= 0)) return
     updateMut.mutate({ eventId, body: editForm })
   }
 
@@ -231,6 +250,34 @@ export default function AdminEvents() {
                 )}
               </div>
             ))}
+          </div>
+
+          <div className="space-y-3 pt-1">
+            <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.override_price}
+                onChange={(e) => setForm((prev) => ({ ...prev, override_price: e.target.checked }))}
+              />
+              Override the default photo price for this event
+            </label>
+            {form.override_price && (
+              <div className="max-w-xs">
+                <label className="block text-xs text-gray-400 mb-1">Photo price</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={form.photo_price_pounds}
+                  onChange={(e) => handleField('photo_price_pounds', e.target.value)}
+                  placeholder="5.00"
+                  className="w-full bg-surface-900 border border-surface-600 rounded-md text-sm text-content px-3 py-2 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-content-muted"
+                />
+                {errors.photo_price_pounds && (
+                  <p className="text-xs text-red-400 mt-1">{errors.photo_price_pounds}</p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-3 pt-1">
@@ -346,6 +393,29 @@ export default function AdminEvents() {
                     <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none px-1">
                       <input
                         type="checkbox"
+                        checked={editForm.override_price}
+                        onChange={(e) => setEditForm((prev) => (prev ? {
+                          ...prev,
+                          override_price: e.target.checked,
+                          photo_price_pounds: e.target.checked ? prev.photo_price_pounds : '',
+                        } : prev))}
+                      />
+                      Override default price
+                    </label>
+                    {editForm.override_price && (
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={editForm.photo_price_pounds}
+                        onChange={(e) => setEditForm((prev) => (prev ? { ...prev, photo_price_pounds: e.target.value } : prev))}
+                        placeholder="Photo price"
+                        className="bg-surface-800 border border-surface-600 rounded-md text-sm text-content px-3 py-2"
+                      />
+                    )}
+                    <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none px-1">
+                      <input
+                        type="checkbox"
                         checked={editForm.is_password_protected}
                         onChange={(e) => setEditForm((prev) => (prev ? {
                           ...prev,
@@ -393,6 +463,16 @@ export default function AdminEvents() {
                       )}
                       {event.is_password_protected && (
                         <span className="text-amber-300">Protected</span>
+                      )}
+                      <span className="text-content-muted">
+                        {formatMoney(event.effective_photo_price_pence, event.currency)}
+                        {event.photo_price_pence ? ' override' : ' inherited'}
+                      </span>
+                      {typeof event.photo_count === 'number' && (
+                        <span>{event.photo_count} photos</span>
+                      )}
+                      {typeof event.order_count === 'number' && (
+                        <span>{event.order_count} orders</span>
                       )}
                       <code className="text-surface-500">{event.slug}</code>
                     </div>

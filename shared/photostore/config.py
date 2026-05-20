@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     STORAGE_ROOT: str = "/data/photos"
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_PRICE_ID: str = ""
     PUBLIC_BASE_URL: str = ""
     ADMIN_TOKEN: str = ""
     ADMIN_SESSION_SECRET: str = ""

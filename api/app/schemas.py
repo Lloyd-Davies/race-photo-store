@@ -23,6 +23,9 @@ class EventOut(BaseModel):
     access_hint: Optional[str] = None
     public_until: Optional[datetime] = None
     archive_after: Optional[datetime] = None
+    photo_price_pence: Optional[int] = None
+    effective_photo_price_pence: int
+    currency: str
 
     model_config = {"from_attributes": True}
 
@@ -118,6 +121,7 @@ class CreateEventRequest(BaseModel):
     access_secret: Optional[str] = None
     access_password: Optional[str] = None
     access_hint: Optional[str] = None
+    photo_price_pence: Optional[int] = None
 
 
 class UpdateEventRequest(BaseModel):
@@ -133,6 +137,8 @@ class UpdateEventRequest(BaseModel):
     access_hint: Optional[str] = None
     public_until: Optional[datetime] = None
     archive_after: Optional[datetime] = None
+    photo_price_pence: Optional[int] = None
+    clear_photo_price: Optional[bool] = None
 
 
 class EventUnlockRequest(BaseModel):
@@ -148,6 +154,11 @@ class EventUnlockOut(BaseModel):
 class EventCreatedOut(BaseModel):
     id: int
     slug: str
+
+
+class AdminEventOut(EventOut):
+    photo_count: int = 0
+    order_count: int = 0
 
 
 class IngestResult(BaseModel):
@@ -196,6 +207,8 @@ class AdminOrderOut(BaseModel):
     created_at: datetime
     paid_at: Optional[datetime] = None
     item_count: int
+    subtotal_pence: int = 0
+    currency: str = "GBP"
     event_slug: Optional[str] = None
     download_count: Optional[int] = None
     max_downloads: Optional[int] = None
@@ -205,6 +218,17 @@ class AdminOrderOut(BaseModel):
 
 class AdminOrderListOut(BaseModel):
     orders: list[AdminOrderOut]
+
+
+class AdminOrderItemOut(BaseModel):
+    photo_id: str
+    unit_price_pence: int
+    discount_applied_pence: int
+    line_total_pence: int
+
+
+class AdminOrderDetailOut(AdminOrderOut):
+    items: list[AdminOrderItemOut] = Field(default_factory=list)
 
 
 class AdminResetDeliveryRequest(BaseModel):
@@ -276,3 +300,25 @@ class AdminEmailTestOut(BaseModel):
     provider: str
     from_address: str
     message: str
+
+
+class AdminCheckoutSettingsOut(BaseModel):
+    default_photo_price_pence: int
+    currency: str
+    allow_stripe_promotion_codes: bool
+
+
+class AdminSettingsOut(BaseModel):
+    checkout: AdminCheckoutSettingsOut
+    stripe_secret_key_set: bool
+    stripe_webhook_secret_set: bool
+    public_base_url: str
+    site_name: str
+    site_tagline: str
+    email: AdminEmailConfigOut
+
+
+class AdminCheckoutSettingsUpdate(BaseModel):
+    default_photo_price_pence: Optional[int] = None
+    currency: Optional[str] = None
+    allow_stripe_promotion_codes: Optional[bool] = None

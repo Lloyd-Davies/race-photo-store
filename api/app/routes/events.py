@@ -14,6 +14,7 @@ from app.rate_limit import enforce_rate_limit
 from app.schemas import EventOut, EventUnlockOut, EventUnlockRequest, PhotoListOut, PhotoOut
 from photostore.config import settings
 from photostore.models import Event, EventStatus, Photo, PhotoTag
+from photostore.pricing import effective_photo_price_pence, get_app_settings
 
 router = APIRouter(prefix="/api", tags=["events"])
 
@@ -30,9 +31,10 @@ def _is_event_publicly_visible(event: Event, now: datetime | None = None) -> boo
 
 
 @router.get("/events", response_model=list[EventOut])
-def list_events(db: Session = Depends(get_db)) -> list[Event]:
+def list_events(db: Session = Depends(get_db)) -> list[EventOut]:
     now = datetime.now(timezone.utc)
-    return (
+    app_settings = get_app_settings(db)
+    events = (
         db.query(Event)
         .filter(Event.status == EventStatus.ACTIVE)
         .filter(or_(Event.public_until.is_(None), Event.public_until >= now))
@@ -40,6 +42,24 @@ def list_events(db: Session = Depends(get_db)) -> list[Event]:
         .order_by(Event.date.desc())
         .all()
     )
+    return [
+        EventOut(
+            id=event.id,
+            slug=event.slug,
+            name=event.name,
+            date=event.date,
+            location=event.location,
+            status=event.status,
+            is_password_protected=event.is_password_protected,
+            access_hint=event.access_hint,
+            public_until=event.public_until,
+            archive_after=event.archive_after,
+            photo_price_pence=event.photo_price_pence,
+            effective_photo_price_pence=effective_photo_price_pence(event, app_settings),
+            currency=app_settings.currency,
+        )
+        for event in events
+    ]
 
 
 @router.get("/events/{event_id}/photos", response_model=PhotoListOut)

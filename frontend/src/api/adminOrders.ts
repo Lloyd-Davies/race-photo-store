@@ -8,11 +8,24 @@ export interface AdminOrder {
   created_at: string
   paid_at?: string
   item_count: number
+  subtotal_pence: number
+  currency: string
   event_slug?: string
   download_count?: number
   max_downloads?: number
   expires_at?: string
   download_url?: string
+}
+
+export interface AdminOrderItem {
+  photo_id: string
+  unit_price_pence: number
+  discount_applied_pence: number
+  line_total_pence: number
+}
+
+export interface AdminOrderDetail extends AdminOrder {
+  items: AdminOrderItem[]
 }
 
 export interface AdminOrderList {
@@ -49,6 +62,9 @@ export const fetchAdminOrders = (params?: { status?: OrderStatus | 'ALL'; q?: st
   const qs = query.toString()
   return apiGet<AdminOrderList>(`/admin/orders${qs ? `?${qs}` : ''}`)
 }
+
+export const fetchAdminOrder = (orderId: number) =>
+  apiGet<AdminOrderDetail>(`/admin/orders/${orderId}`)
 
 export const resetAdminOrderDelivery = (
   orderId: number,

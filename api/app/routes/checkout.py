@@ -9,7 +9,8 @@ from app.deps import get_db
 from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
 from photostore.config import settings
-from photostore.models import Cart, Order, OrderItem, OrderStatus
+from photostore.models import Cart, Event, Order, OrderItem, OrderStatus
+from photostore.pricing import effective_photo_price_pence, get_app_settings
 
 router = APIRouter(prefix="/api", tags=["checkout"])
 
@@ -17,7 +18,7 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 def _require_stripe() -> None:
-    if not settings.STRIPE_SECRET_KEY or not settings.STRIPE_PRICE_ID:
+    if not settings.STRIPE_SECRET_KEY:
         raise HTTPException(503, "Stripe is not configured on this server")
 
 
@@ -27,6 +28,10 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     cart = db.query(Cart).filter(Cart.id == req.cart_id).first()
     if not cart:
         raise HTTPException(404, "Cart not found")
+
+    event = db.query(Event).filter(Event.id == cart.event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
 
     # Reject expired carts
     if cart.expires_at and datetime.now(timezone.utc) > cart.expires_at:
@@ -38,9 +43,11 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     if count == 0:
         raise HTTPException(400, "Cart is empty")
 
-    # Look up actual unit price from Stripe so we can record it
-    price_obj = stripe.Price.retrieve(settings.STRIPE_PRICE_ID)
-    unit_amount_pence: int = price_obj.unit_amount or 0
+    app_settings = get_app_settings(db)
+    unit_amount_pence = effective_photo_price_pence(event, app_settings)
+    currency = app_settings.currency.lower()
+    if unit_amount_pence <= 0:
+        raise HTTPException(503, "Checkout pricing is not configured on this server")
 
     # Create the order row first so we can use the numeric ID in the Stripe
     # success URL. The stripe_session_id gets a unique placeholder until the
@@ -49,6 +56,7 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
         stripe_session_id=f"pending_{_uuid.uuid4()}",
         email=req.email or cart.email or "",
         status=OrderStatus.PENDING,
+        currency=app_settings.currency,
     )
     db.add(order)
     db.flush()  # assigns order.id without committing
@@ -68,9 +76,19 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     # so the frontend can poll GET /api/orders/{order_id} immediately on return.
     session = stripe.checkout.Session.create(
         mode="payment",
-        line_items=[{"price": settings.STRIPE_PRICE_ID, "quantity": count}],
+        line_items=[
+            {
+                "price_data": {
+                    "currency": currency,
+                    "unit_amount": unit_amount_pence,
+                    "product_data": {"name": f"{event.name} photo download"},
+                },
+                "quantity": count,
+            }
+        ],
         customer_email=req.email or cart.email or None,
-        metadata={"cart_id": str(cart.id), "event_id": str(cart.event_id)},
+        metadata={"cart_id": str(cart.id), "event_id": str(cart.event_id), "order_id": str(order.id)},
+        allow_promotion_codes=app_settings.allow_stripe_promotion_codes,
         success_url=f"{settings.PUBLIC_BASE_URL}/orders/{order.id}?access_token={order_access_token}",
         cancel_url=f"{settings.PUBLIC_BASE_URL}/",
     )
