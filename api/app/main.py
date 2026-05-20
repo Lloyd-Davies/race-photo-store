@@ -10,6 +10,7 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(config.router)
+app.include_router(events.public_router)
 app.include_router(events.router)
 app.include_router(cart.router)
 app.include_router(checkout.router)

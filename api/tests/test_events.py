@@ -65,10 +65,9 @@ def test_list_photos(client, test_event, test_photos):
     data = resp.json()
     assert data["total"] == 3
     assert len(data["photos"]) == 3
-    # proof_url must use guarded API proof endpoint
+    # Public events use cache-friendly proof URLs.
     for photo in data["photos"]:
-        assert photo["proof_url"].startswith(f"/api/events/{test_event.id}/photos/")
-        assert photo["proof_url"].endswith("/proof")
+        assert photo["proof_url"] == f"/proofs/{test_event.id}/{photo['photo_id']}.jpg"
         assert "photo_id" in photo
 
 
@@ -246,6 +245,178 @@ def test_get_event_proof_unlocked_event(client, test_event, test_photos):
     assert resp.status_code == 200
     assert "X-Accel-Redirect" in resp.headers
     assert resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/{photo_id}.jpg")
+    assert resp.headers["Cache-Control"] == "no-store"
+
+
+def test_get_public_proof_cacheable(client, test_event, test_photos):
+    photo_id = test_photos[0].id
+    resp = client.get(f"/proofs/{test_event.id}/{photo_id}.jpg")
+    assert resp.status_code == 200
+    assert resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/{photo_id}.jpg")
+    assert resp.headers["Content-Type"] == "image/jpeg"
+    assert resp.headers["Cache-Control"] == "public, max-age=2592000, immutable"
+
+
+def test_get_public_proof_hidden_event_returns_not_found(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, EventStatus, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="hidden-public-proof-event",
+        name="Hidden Public Proof Event",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        status=EventStatus.ARCHIVED,
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="hidden-public-proof-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/hidden-public-proof-001.jpg",
+        original_path=f"originals/{event.slug}/hidden-public-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    proof = storage / "proofs" / event.slug / "hidden-public-proof-001.jpg"
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    proof.write_bytes(b"FAKEJPEG")
+
+    resp = client.get(f"/proofs/{event.id}/hidden-public-proof-001.jpg")
+    assert resp.status_code == 404
+
+
+def test_get_public_proof_expired_event_returns_not_found(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="expired-public-proof",
+        name="Expired Public Proof",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        public_until=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="expired-public-proof-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/expired-public-proof-001.jpg",
+        original_path=f"originals/{event.slug}/expired-public-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    proof = storage / "proofs" / event.slug / "expired-public-proof-001.jpg"
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    proof.write_bytes(b"FAKEJPEG")
+
+    resp = client.get(f"/proofs/{event.id}/expired-public-proof-001.jpg")
+    assert resp.status_code == 404
+
+
+def test_get_public_proof_locked_event_returns_not_found(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.event_access import hash_event_password
+    from photostore.config import settings
+    from photostore.models import Event, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="locked-public-proof",
+        name="Locked Public Proof",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        is_password_protected=True,
+        access_password_hash=hash_event_password("secret123"),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="locked-public-proof-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/locked-public-proof-001.jpg",
+        original_path=f"originals/{event.slug}/locked-public-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    proof = storage / "proofs" / event.slug / "locked-public-proof-001.jpg"
+    proof.parent.mkdir(parents=True, exist_ok=True)
+    proof.write_bytes(b"FAKEJPEG")
+
+    resp = client.get(f"/proofs/{event.id}/locked-public-proof-001.jpg")
+    assert resp.status_code == 404
+
+
+def test_get_public_proof_missing_file_returns_not_found(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="missing-public-proof",
+        name="Missing Public Proof",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="missing-public-proof-001",
+        event_id=event.id,
+        proof_path=f"proofs/{event.slug}/missing-public-proof-001.jpg",
+        original_path=f"originals/{event.slug}/missing-public-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    resp = client.get(f"/proofs/{event.id}/missing-public-proof-001.jpg")
+    assert resp.status_code == 404
+
+
+def test_get_public_proof_rejects_path_outside_proofs(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="invalid-public-proof",
+        name="Invalid Public Proof",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    db_session.add(Photo(
+        id="invalid-public-proof-001",
+        event_id=event.id,
+        proof_path=f"originals/{event.slug}/invalid-public-proof-001.jpg",
+        original_path=f"originals/{event.slug}/invalid-public-proof-001.jpg",
+    ))
+    db_session.flush()
+
+    resp = client.get(f"/proofs/{event.id}/invalid-public-proof-001.jpg")
+    assert resp.status_code == 500
 
 
 def test_get_event_proof_locked_requires_token(client, db_session, tmp_path, monkeypatch):

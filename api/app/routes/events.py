@@ -17,6 +17,10 @@ from photostore.models import Event, EventStatus, Photo, PhotoTag
 from photostore.pricing import effective_photo_price_pence, get_app_settings
 
 router = APIRouter(prefix="/api", tags=["events"])
+public_router = APIRouter(tags=["events"])
+
+PUBLIC_PROOF_CACHE_CONTROL = "public, max-age=2592000, immutable"
+LEGACY_PROOF_CACHE_CONTROL = "no-store"
 
 
 def _is_event_publicly_visible(event: Event, now: datetime | None = None) -> bool:
@@ -28,6 +32,33 @@ def _is_event_publicly_visible(event: Event, now: datetime | None = None) -> boo
     if event.archive_after and event.archive_after <= check_time:
         return False
     return True
+
+
+def _proof_accel_path(photo: Photo) -> tuple[Path, str]:
+    proof_abs = (Path(settings.STORAGE_ROOT) / photo.proof_path).resolve()
+    proofs_root = (Path(settings.STORAGE_ROOT) / "proofs").resolve()
+
+    try:
+        proof_rel = proof_abs.relative_to(proofs_root)
+    except ValueError:
+        raise HTTPException(500, "Invalid proof image path")
+
+    if not proof_abs.exists():
+        raise HTTPException(404, "Proof image not found")
+
+    return proof_abs, f"/_internal_proofs/{proof_rel.as_posix()}"
+
+
+def _photo_proof_response(photo: Photo, cache_control: str) -> Response:
+    _, accel_path = _proof_accel_path(photo)
+    return Response(
+        status_code=200,
+        headers={
+            "X-Accel-Redirect": accel_path,
+            "Content-Type": "image/jpeg",
+            "Cache-Control": cache_control,
+        },
+    )
 
 
 @router.get("/events", response_model=list[EventOut])
@@ -126,7 +157,7 @@ def list_photos(
                 proof_url=(
                     f"/api/events/{event_id}/photos/{p.id}/proof?access_token={x_event_access}"
                     if event.is_password_protected and x_event_access
-                    else f"/api/events/{event_id}/photos/{p.id}/proof"
+                    else f"/proofs/{event_id}/{p.id}.jpg"
                 ),
                 captured_at=p.captured_at,
             )
@@ -189,22 +220,29 @@ def get_event_proof(
     if event.is_password_protected and not verify_event_access_token(provided_access, event_id):
         raise HTTPException(401, "Event is locked. Unlock required.")
 
-    proof_abs = (Path(settings.STORAGE_ROOT) / photo.proof_path).resolve()
-    proofs_root = (Path(settings.STORAGE_ROOT) / "proofs").resolve()
+    return _photo_proof_response(photo, LEGACY_PROOF_CACHE_CONTROL)
 
-    try:
-        proof_rel = proof_abs.relative_to(proofs_root)
-    except ValueError:
-        raise HTTPException(500, "Invalid proof image path")
 
-    if not proof_abs.exists():
+@public_router.get("/proofs/{event_id}/{photo_id}.jpg")
+def get_public_proof(
+    event_id: int,
+    photo_id: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if (
+        not event
+        or not _is_event_publicly_visible(event)
+        or event.is_password_protected
+    ):
         raise HTTPException(404, "Proof image not found")
 
-    return Response(
-        status_code=200,
-        headers={
-            "X-Accel-Redirect": f"/_internal_proofs/{proof_rel.as_posix()}",
-            "Content-Type": "image/jpeg",
-            "Cache-Control": "public, max-age=604800, immutable",
-        },
+    photo = (
+        db.query(Photo)
+        .filter(Photo.id == photo_id, Photo.event_id == event_id)
+        .first()
     )
+    if not photo:
+        raise HTTPException(404, "Proof image not found")
+
+    return _photo_proof_response(photo, PUBLIC_PROOF_CACHE_CONTROL)
