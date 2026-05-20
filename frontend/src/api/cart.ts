@@ -7,7 +7,7 @@ export interface CartResponse {
 
 export interface CheckoutResponse {
   order_id: number
-  stripe_checkout_url: string
+  stripe_checkout_url?: string | null
   order_access_token: string
 }
 

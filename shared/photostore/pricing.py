@@ -28,4 +28,6 @@ def get_app_settings(db: Session) -> AppSettings:
 
 
 def effective_photo_price_pence(event: Event, app_settings: AppSettings) -> int:
-    return event.photo_price_pence or app_settings.default_photo_price_pence
+    if event.photo_price_pence is not None:
+        return event.photo_price_pence
+    return app_settings.default_photo_price_pence

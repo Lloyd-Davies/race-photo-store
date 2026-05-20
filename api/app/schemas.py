@@ -83,7 +83,7 @@ class CheckoutRequest(BaseModel):
 
 class CheckoutOut(BaseModel):
     order_id: int
-    stripe_checkout_url: str
+    stripe_checkout_url: Optional[str] = None
     order_access_token: str
 
 

@@ -180,8 +180,8 @@ export default function AdminEvents() {
     if (form.is_password_protected && !form.access_secret.trim()) {
       errs.access_secret = 'Required for protected events'
     }
-    if (form.override_price && (!form.photo_price_pounds || Number(form.photo_price_pounds) <= 0)) {
-      errs.photo_price_pounds = 'Enter a price greater than 0'
+    if (form.override_price && (!form.photo_price_pounds || Number(form.photo_price_pounds) < 0)) {
+      errs.photo_price_pounds = 'Enter a price of 0 or greater'
     }
     if (Object.keys(errs).length) { setErrors(errs); return }
     createMut.mutate()
@@ -205,7 +205,7 @@ export default function AdminEvents() {
 
   function saveEdit(eventId: number) {
     if (!editForm || !editForm.name || !editForm.date) return
-    if (editForm.override_price && (!editForm.photo_price_pounds || Number(editForm.photo_price_pounds) <= 0)) return
+    if (editForm.override_price && (!editForm.photo_price_pounds || Number(editForm.photo_price_pounds) < 0)) return
     updateMut.mutate({ eventId, body: editForm })
   }
 
@@ -266,7 +266,7 @@ export default function AdminEvents() {
                 <label className="block text-xs text-gray-400 mb-1">Photo price</label>
                 <input
                   type="number"
-                  min="0.01"
+                  min="0"
                   step="0.01"
                   value={form.photo_price_pounds}
                   onChange={(e) => handleField('photo_price_pounds', e.target.value)}
@@ -405,7 +405,7 @@ export default function AdminEvents() {
                     {editForm.override_price && (
                       <input
                         type="number"
-                        min="0.01"
+                        min="0"
                         step="0.01"
                         value={editForm.photo_price_pounds}
                         onChange={(e) => setEditForm((prev) => (prev ? { ...prev, photo_price_pounds: e.target.value } : prev))}

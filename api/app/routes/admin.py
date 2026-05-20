@@ -217,8 +217,8 @@ def create_event(req: CreateEventRequest, db: Session = Depends(get_db)) -> Even
     access_secret = (req.access_secret or req.access_password or "").strip()
     if req.is_password_protected and not access_secret:
         raise HTTPException(400, "Protected events require an access secret")
-    if req.photo_price_pence is not None and req.photo_price_pence <= 0:
-        raise HTTPException(400, "photo_price_pence must be greater than 0")
+    if req.photo_price_pence is not None and req.photo_price_pence < 0:
+        raise HTTPException(400, "photo_price_pence must be 0 or greater")
 
     event = Event(
         slug=req.slug,
@@ -257,8 +257,8 @@ def update_event(
     clear_access_password = payload.pop("clear_access_password", False)
     clear_photo_price = payload.pop("clear_photo_price", False)
 
-    if payload.get("photo_price_pence") is not None and payload["photo_price_pence"] <= 0:
-        raise HTTPException(400, "photo_price_pence must be greater than 0")
+    if payload.get("photo_price_pence") is not None and payload["photo_price_pence"] < 0:
+        raise HTTPException(400, "photo_price_pence must be 0 or greater")
 
     for field, value in payload.items():
         setattr(event, field, value)
@@ -347,8 +347,8 @@ def update_checkout_settings(
 
     if "default_photo_price_pence" in payload:
         price = payload["default_photo_price_pence"]
-        if price is None or price <= 0:
-            raise HTTPException(400, "default_photo_price_pence must be greater than 0")
+        if price is None or price < 0:
+            raise HTTPException(400, "default_photo_price_pence must be 0 or greater")
         app_settings.default_photo_price_pence = price
 
     if "currency" in payload:

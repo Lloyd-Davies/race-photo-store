@@ -34,8 +34,8 @@ export default function AdminSettings() {
   const checkoutMut = useMutation({
     mutationFn: () => {
       const amount = Math.round(Number(pricePounds) * 100)
-      if (!Number.isFinite(amount) || amount <= 0) {
-        throw new Error('Default photo price must be greater than 0.')
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error('Default photo price must be 0 or greater.')
       }
       return updateCheckoutSettings({
         default_photo_price_pence: amount,
@@ -79,7 +79,7 @@ export default function AdminSettings() {
                 <label className="block text-xs text-content-muted mb-1">Default photo price</label>
                 <input
                   type="number"
-                  min="0.01"
+                  min="0"
                   step="0.01"
                   value={pricePounds}
                   onChange={(e) => setPricePounds(e.target.value)}

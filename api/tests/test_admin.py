@@ -227,11 +227,11 @@ def test_update_event_price_override_and_clear(admin_client, db_session, test_ev
 
     resp = admin_client.patch(
         f"/api/admin/events/{test_event.id}",
-        json={"photo_price_pence": 650},
+        json={"photo_price_pence": 0},
     )
     assert resp.status_code == 200
     refreshed = db_session.query(Event).filter(Event.id == test_event.id).first()
-    assert refreshed.photo_price_pence == 650
+    assert refreshed.photo_price_pence == 0
 
     resp = admin_client.patch(
         f"/api/admin/events/{test_event.id}",
@@ -912,21 +912,21 @@ def test_admin_settings_checkout_update(admin_client, db_session):
     resp = admin_client.patch(
         "/api/admin/settings/checkout",
         json={
-            "default_photo_price_pence": 875,
+            "default_photo_price_pence": 0,
             "currency": "gbp",
             "allow_stripe_promotion_codes": True,
         },
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["checkout"]["default_photo_price_pence"] == 875
+    assert data["checkout"]["default_photo_price_pence"] == 0
     assert data["checkout"]["currency"] == "GBP"
     assert data["checkout"]["allow_stripe_promotion_codes"] is True
 
     from photostore.pricing import get_app_settings
 
     stored = get_app_settings(db_session)
-    assert stored.default_photo_price_pence == 875
+    assert stored.default_photo_price_pence == 0
     assert stored.currency == "GBP"
     assert stored.allow_stripe_promotion_codes is True
 
@@ -934,7 +934,7 @@ def test_admin_settings_checkout_update(admin_client, db_session):
 def test_admin_settings_rejects_invalid_checkout_price(admin_client):
     resp = admin_client.patch(
         "/api/admin/settings/checkout",
-        json={"default_photo_price_pence": 0},
+        json={"default_photo_price_pence": -1},
     )
     assert resp.status_code == 400
 

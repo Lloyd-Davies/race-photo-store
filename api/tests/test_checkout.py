@@ -3,6 +3,34 @@ def test_checkout_stripe_not_configured(client, test_cart):
     assert resp.status_code == 503
 
 
+def test_free_checkout_does_not_require_stripe(
+    client, db_session, test_cart, test_event, mock_stripe, mock_celery_send_task
+):
+    from photostore.models import Order, OrderItem, OrderStatus
+
+    test_event.photo_price_pence = 0
+    db_session.flush()
+
+    resp = client.post("/api/checkout", json={"cart_id": str(test_cart.id), "email": "runner@example.com"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["stripe_checkout_url"] is None
+    assert data["order_access_token"]
+
+    order = db_session.query(Order).filter(Order.id == data["order_id"]).one()
+    assert order.status == OrderStatus.PAID
+    assert order.paid_at is not None
+    assert order.stripe_session_id.startswith("free_")
+    assert {
+        row[0]
+        for row in db_session.query(OrderItem.unit_price_pence)
+        .filter(OrderItem.order_id == order.id)
+        .all()
+    } == {0}
+    mock_celery_send_task.assert_called_with("tasks.build_zip.build_zip", args=[order.id])
+
+
 def test_checkout_creates_order(client, test_cart, mock_stripe, monkeypatch):
     from unittest.mock import patch
 

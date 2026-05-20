@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.deps import get_db
 from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
+from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.models import Cart, Event, Order, OrderItem, OrderStatus
 from photostore.pricing import effective_photo_price_pence, get_app_settings
@@ -24,7 +25,6 @@ def _require_stripe() -> None:
 
 @router.post("/checkout", response_model=CheckoutOut)
 def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> CheckoutOut:
-    _require_stripe()
     cart = db.query(Cart).filter(Cart.id == req.cart_id).first()
     if not cart:
         raise HTTPException(404, "Cart not found")
@@ -46,8 +46,10 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     app_settings = get_app_settings(db)
     unit_amount_pence = effective_photo_price_pence(event, app_settings)
     currency = app_settings.currency.lower()
-    if unit_amount_pence <= 0:
+    if unit_amount_pence < 0:
         raise HTTPException(503, "Checkout pricing is not configured on this server")
+    if unit_amount_pence > 0:
+        _require_stripe()
 
     # Create the order row first so we can use the numeric ID in the Stripe
     # success URL. The stripe_session_id gets a unique placeholder until the
@@ -55,8 +57,9 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     order = Order(
         stripe_session_id=f"pending_{_uuid.uuid4()}",
         email=req.email or cart.email or "",
-        status=OrderStatus.PENDING,
+        status=OrderStatus.PAID if unit_amount_pence == 0 else OrderStatus.PENDING,
         currency=app_settings.currency,
+        paid_at=(datetime.now(timezone.utc) if unit_amount_pence == 0 else None),
     )
     db.add(order)
     db.flush()  # assigns order.id without committing
@@ -71,6 +74,16 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
         )
 
     order_access_token, _ = create_order_access_token(order.id)
+
+    if unit_amount_pence == 0:
+        order.stripe_session_id = f"free_{_uuid.uuid4()}"
+        db.commit()
+        celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+        return CheckoutOut(
+            order_id=order.id,
+            stripe_checkout_url=None,
+            order_access_token=order_access_token,
+        )
 
     # Create Stripe Checkout session — success URL uses our numeric order ID
     # so the frontend can poll GET /api/orders/{order_id} immediately on return.

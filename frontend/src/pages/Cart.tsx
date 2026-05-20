@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Trash2, ArrowLeft, Mail } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useCartStore } from '../store/cart'
@@ -19,6 +19,7 @@ export default function Cart() {
   const clear = useCartStore((s) => s.clear)
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate()
   const siteConfig = useSiteConfig()
   const { data: events } = useQuery({ queryKey: ['events'], queryFn: fetchEvents })
   const event = events?.find((e) => e.id === eventId)
@@ -46,8 +47,13 @@ export default function Cart() {
       localStorage.setItem('lastOrderId', String(checkout.order_id))
       localStorage.setItem(`orderAccessToken:${checkout.order_id}`, checkout.order_access_token)
 
-      // Hand off to Stripe — browser navigates away
-      window.location.href = checkout.stripe_checkout_url
+      if (checkout.stripe_checkout_url) {
+        // Hand off to Stripe — browser navigates away
+        window.location.href = checkout.stripe_checkout_url
+        return
+      }
+
+      navigate(`/orders/${checkout.order_id}?access_token=${checkout.order_access_token}`)
     },
     onError: (e: Error) => setError(e.message),
   })
