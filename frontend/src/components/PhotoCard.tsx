@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, Maximize2, PlusCircle } from 'lucide-react'
+import { Check, Maximize2, Plus } from 'lucide-react'
 import { useCartStore } from '../store/cart'
 import { useIntersection } from '../hooks/useIntersection'
 import type { Photo } from '../api/events'
@@ -35,73 +35,68 @@ export default function PhotoCard({ photo, eventId, eventSlug, onFullscreen }: P
   return (
     <div
       ref={ref}
-      className={`masonry-item group relative cursor-pointer rounded overflow-hidden bg-surface-900 transition-transform hover:scale-[1.01] ${
-        inCart ? 'ring-2 ring-sky-500' : ''
+      className={`masonry-item group relative cursor-pointer overflow-hidden rounded-lg bg-surface-900 transition-transform hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
+        inCart ? 'ring-2 ring-sky-500 ring-offset-2 ring-offset-surface-950' : ''
       }`}
       onClick={toggle}
       role="button"
       tabIndex={0}
       aria-pressed={inCart}
-      onKeyDown={(e) => e.key === 'Enter' && toggle(e as unknown as React.MouseEvent)}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        toggle(e as unknown as React.MouseEvent)
+      }}
     >
-      {/* Loading shimmer — shown until image is decoded */}
       {!loaded && (
-        <div className="w-full bg-surface-800 animate-pulse" style={{ paddingBottom: '66.67%' }} />
+        <div className="w-full animate-pulse bg-surface-800" style={{ paddingBottom: '66.67%' }} />
       )}
 
-      {/* Actual image — only mounted when in viewport */}
       {isVisible && (
         <img
           src={photo.proof_url}
           alt={`Photo ${photo.photo_id}`}
           loading="lazy"
           decoding="async"
-          className={`w-full h-auto block transition-opacity duration-300 ${
-            loaded ? 'opacity-100' : 'opacity-0 absolute top-0 left-0'
+          className={`block h-auto w-full transition-opacity duration-300 ${
+            loaded ? 'opacity-100' : 'absolute left-0 top-0 opacity-0'
           }`}
           onLoad={() => setLoaded(true)}
         />
       )}
 
-      {/* Selection overlay */}
       <div
         className={`absolute inset-0 transition-all duration-200 ${
-          inCart
-            ? 'bg-sky-500/20'
-            : 'bg-black/0 group-hover:bg-black/20'
+          inCart ? 'bg-sky-500/15' : 'bg-black/0 group-hover:bg-black/15'
         }`}
       />
 
-      {/* Selection icon */}
-      <button
-        className="absolute top-2 right-2 transition-opacity duration-200 opacity-0 group-hover:opacity-100 focus:opacity-100"
-        aria-hidden={!inCart}
-        tabIndex={-1}
+      <span
+        className={`absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border text-white shadow transition-opacity duration-200 ${
+          inCart
+            ? 'border-sky-400 bg-sky-500 opacity-100'
+            : 'border-white/50 bg-black/45 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'
+        }`}
+        aria-hidden
       >
-        {inCart ? (
-          <CheckCircle2 size={22} className="text-sky-400 drop-shadow" />
-        ) : (
-          <PlusCircle size={22} className="text-white drop-shadow" />
-        )}
-      </button>
+        {inCart ? <Check size={17} /> : <Plus size={17} />}
+      </span>
 
-      {/* Fullscreen action */}
       {onFullscreen && (
         <button
           onClick={openFullscreen}
-          className="absolute top-2 left-2 transition-opacity duration-200 opacity-0 group-hover:opacity-100 focus:opacity-100 text-white"
+          className="absolute left-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-white/50 bg-black/45 text-white opacity-0 shadow transition-opacity duration-200 hover:bg-black/65 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white group-hover:opacity-100"
           aria-label="Open fullscreen viewer"
         >
-          <Maximize2 size={20} className="drop-shadow" />
+          <Maximize2 size={16} />
         </button>
       )}
-      {/* Photo ID badge — bottom-centre, derived from photo_id (last segment) */}
-      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 pointer-events-none">
-        <span className="bg-black/65 text-white text-xs font-mono px-2 py-0.5 rounded-full select-none">
+
+      <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2">
+        <span className="select-none rounded bg-black/65 px-2 py-0.5 font-mono text-xs text-white">
           {photo.photo_id.split('-').slice(-1)[0]}
         </span>
       </div>
-
     </div>
   )
 }
