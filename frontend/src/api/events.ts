@@ -60,10 +60,13 @@ export interface DeleteEventResult {
 
 export const fetchEvents = () => apiGet<Event[]>('/events')
 
+export const fetchEvent = (eventRef: string) =>
+  apiGet<Event>(`/events/${encodeURIComponent(eventRef)}`)
+
 export const fetchAdminEvents = () => apiGet<Event[]>('/admin/events')
 
 export const fetchPhotos = (
-  eventId: number,
+  eventRef: string,
   page = 1,
   bib?: string,
   startTime?: string,
@@ -77,11 +80,11 @@ export const fetchPhotos = (
   const headers: HeadersInit | undefined = eventAccessToken
     ? { 'X-Event-Access': eventAccessToken }
     : undefined
-  return apiGet<PhotoListResponse>(`/events/${eventId}/photos?${params}`, headers)
+  return apiGet<PhotoListResponse>(`/events/${encodeURIComponent(eventRef)}/photos?${params}`, headers)
 }
 
-export const unlockEvent = (eventId: number, secret: string) =>
-  apiPost<EventUnlockResponse>(`/events/${eventId}/unlock`, { secret })
+export const unlockEvent = (eventRef: string, secret: string) =>
+  apiPost<EventUnlockResponse>(`/events/${encodeURIComponent(eventRef)}/unlock`, { secret })
 
 export const createEvent = (body: {
   slug: string

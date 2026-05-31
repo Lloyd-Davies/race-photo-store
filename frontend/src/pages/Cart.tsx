@@ -15,6 +15,7 @@ import { isEmbeddedInAppBrowser } from '../utils/embeddedBrowser'
 export default function Cart() {
   const items = useCartStore((s) => s.items)
   const eventId = useCartStore((s) => s.eventId)
+  const eventSlug = useCartStore((s) => s.eventSlug)
   const remove = useCartStore((s) => s.remove)
   const clear = useCartStore((s) => s.clear)
   const [email, setEmail] = useState('')
@@ -23,6 +24,7 @@ export default function Cart() {
   const siteConfig = useSiteConfig()
   const { data: events } = useQuery({ queryKey: ['events'], queryFn: fetchEvents })
   const event = events?.find((e) => e.id === eventId)
+  const galleryPath = event?.slug ? `/events/${event.slug}` : eventSlug ? `/events/${eventSlug}` : '/'
   const unitPrice = event?.effective_photo_price_pence
   const subtotal = unitPrice ? items.length * unitPrice : 0
   const isInAppBrowser = isEmbeddedInAppBrowser()
@@ -72,7 +74,7 @@ export default function Cart() {
   return (
     <div className="max-w-xl mx-auto px-4 sm:px-6 py-10">
       <Link
-        to={eventId ? `/events/${eventId}` : '/'}
+        to={galleryPath}
         className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-6 transition-colors"
       >
         <ArrowLeft size={16} />

@@ -13,6 +13,23 @@ def test_list_events(client, test_event):
     assert data[0]["name"] == test_event.name
 
 
+def test_get_event_by_slug(client, test_event):
+    resp = client.get(f"/api/events/{test_event.slug}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == test_event.id
+    assert data["slug"] == test_event.slug
+    assert data["name"] == test_event.name
+
+
+def test_get_event_by_legacy_id_alias(client, test_event):
+    resp = client.get(f"/api/events/{test_event.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == test_event.id
+    assert data["slug"] == test_event.slug
+
+
 def test_list_events_enforces_visibility_windows(client, db_session):
     from datetime import datetime, timedelta, timezone
 
@@ -59,16 +76,51 @@ def test_list_events_enforces_visibility_windows(client, db_session):
     assert "archive-window-event" not in slugs
 
 
+def test_get_event_enforces_visibility_windows(client, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from photostore.models import Event, EventStatus
+
+    now = datetime.now(timezone.utc)
+    expired = Event(
+        slug="expired-detail-event",
+        name="Expired Detail",
+        date=now,
+        status=EventStatus.ACTIVE,
+        public_until=now - timedelta(minutes=1),
+    )
+    archived = Event(
+        slug="archived-detail-event",
+        name="Archived Detail",
+        date=now,
+        status=EventStatus.ARCHIVED,
+    )
+    db_session.add_all([expired, archived])
+    db_session.flush()
+
+    assert client.get("/api/events/expired-detail-event").status_code == 404
+    assert client.get("/api/events/archived-detail-event").status_code == 404
+    assert client.get("/api/events/missing-detail-event").status_code == 404
+
+
 def test_list_photos(client, test_event, test_photos):
     resp = client.get(f"/api/events/{test_event.id}/photos")
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 3
     assert len(data["photos"]) == 3
-    # Public events use cache-friendly proof URLs.
+    # Public events use cache-friendly canonical slug proof URLs.
     for photo in data["photos"]:
-        assert photo["proof_url"] == f"/proofs/{test_event.id}/{photo['photo_id']}.jpg"
+        assert photo["proof_url"] == f"/proofs/{test_event.slug}/{photo['photo_id']}.jpg"
         assert "photo_id" in photo
+
+
+def test_list_photos_by_slug(client, test_event, test_photos):
+    resp = client.get(f"/api/events/{test_event.slug}/photos")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    assert len(data["photos"]) == 3
 
 
 def test_list_photos_pagination(client, test_event, test_photos):
@@ -222,15 +274,15 @@ def test_unlock_event_and_list_photos(client, db_session):
     ))
     db_session.flush()
 
-    bad = client.post(f"/api/events/{event.id}/unlock", json={"password": "wrong"})
+    bad = client.post(f"/api/events/{event.slug}/unlock", json={"password": "wrong"})
     assert bad.status_code == 401
 
-    unlock = client.post(f"/api/events/{event.id}/unlock", json={"secret": "secret123"})
+    unlock = client.post(f"/api/events/{event.slug}/unlock", json={"secret": "secret123"})
     assert unlock.status_code == 200
     token = unlock.json()["access_token"]
 
     resp = client.get(
-        f"/api/events/{event.id}/photos",
+        f"/api/events/{event.slug}/photos",
         headers={"X-Event-Access": token},
     )
     assert resp.status_code == 200
@@ -250,11 +302,18 @@ def test_get_event_proof_unlocked_event(client, test_event, test_photos):
 
 def test_get_public_proof_cacheable(client, test_event, test_photos):
     photo_id = test_photos[0].id
-    resp = client.get(f"/proofs/{test_event.id}/{photo_id}.jpg")
+    resp = client.get(f"/proofs/{test_event.slug}/{photo_id}.jpg")
     assert resp.status_code == 200
     assert resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/{photo_id}.jpg")
     assert resp.headers["Content-Type"] == "image/jpeg"
     assert resp.headers["Cache-Control"] == "public, max-age=2592000, immutable"
+
+
+def test_get_public_proof_legacy_id_alias(client, test_event, test_photos):
+    photo_id = test_photos[0].id
+    resp = client.get(f"/proofs/{test_event.id}/{photo_id}.jpg")
+    assert resp.status_code == 200
+    assert resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/{photo_id}.jpg")
 
 
 def test_get_public_proof_hidden_event_returns_not_found(client, db_session, tmp_path, monkeypatch):

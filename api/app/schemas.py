@@ -1,10 +1,21 @@
 from datetime import datetime
+import re
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from photostore.models import CommunicationKind, CommunicationStatus, EventStatus, OrderStatus
+
+EVENT_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def validate_event_slug(slug: str) -> str:
+    if not EVENT_SLUG_RE.fullmatch(slug):
+        raise ValueError("slug must contain lowercase letters, numbers, and single hyphens only")
+    if slug.isdigit():
+        raise ValueError("slug must not be all numeric")
+    return slug
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +133,11 @@ class CreateEventRequest(BaseModel):
     access_password: Optional[str] = None
     access_hint: Optional[str] = None
     photo_price_pence: Optional[int] = None
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, value: str) -> str:
+        return validate_event_slug(value)
 
 
 class UpdateEventRequest(BaseModel):

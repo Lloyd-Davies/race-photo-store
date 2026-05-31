@@ -7,10 +7,11 @@ import type { Photo } from '../api/events'
 interface PhotoCardProps {
   photo: Photo
   eventId: number
+  eventSlug: string
   onFullscreen?: (photo: Photo) => void
 }
 
-export default function PhotoCard({ photo, eventId, onFullscreen }: PhotoCardProps) {
+export default function PhotoCard({ photo, eventId, eventSlug, onFullscreen }: PhotoCardProps) {
   const [ref, isVisible] = useIntersection({ rootMargin: '200px' })
   const [loaded, setLoaded] = useState(false)
   const inCart = useCartStore((s) => s.has(photo.photo_id))
@@ -22,7 +23,7 @@ export default function PhotoCard({ photo, eventId, onFullscreen }: PhotoCardPro
     if (inCart) {
       remove(photo.photo_id)
     } else {
-      add({ photoId: photo.photo_id, eventId, proofUrl: photo.proof_url })
+      add({ photoId: photo.photo_id, eventId, eventSlug, proofUrl: photo.proof_url })
     }
   }
 

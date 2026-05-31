@@ -17,7 +17,7 @@ export default function App() {
       <Route element={<Layout />}>
         {/* Public */}
         <Route index element={<EventList />} />
-        <Route path="events/:eventId" element={<EventGallery />} />
+        <Route path="events/:eventRef" element={<EventGallery />} />
         <Route path="cart" element={<Cart />} />
         <Route path="orders/:orderId" element={<OrderStatus />} />
 

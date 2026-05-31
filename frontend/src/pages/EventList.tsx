@@ -14,7 +14,7 @@ function EventCard({ event }: { event: Event }) {
 
   return (
     <Link
-      to={`/events/${event.id}`}
+      to={`/events/${event.slug}`}
       className="group block bg-surface-900 border border-surface-700 rounded-xl overflow-hidden hover:border-sky-500/60 transition-colors"
     >
       {/* Colour band */}

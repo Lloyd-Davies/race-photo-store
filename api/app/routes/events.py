@@ -34,6 +34,40 @@ def _is_event_publicly_visible(event: Event, now: datetime | None = None) -> boo
     return True
 
 
+def _event_out(event: Event, app_settings) -> EventOut:
+    return EventOut(
+        id=event.id,
+        slug=event.slug,
+        name=event.name,
+        date=event.date,
+        location=event.location,
+        status=event.status,
+        is_password_protected=event.is_password_protected,
+        access_hint=event.access_hint,
+        public_until=event.public_until,
+        archive_after=event.archive_after,
+        photo_price_pence=event.photo_price_pence,
+        effective_photo_price_pence=effective_photo_price_pence(event, app_settings),
+        currency=app_settings.currency,
+    )
+
+
+def _resolve_event_ref(event_ref: str, db: Session) -> Event | None:
+    event = db.query(Event).filter(Event.slug == event_ref).first()
+    if event:
+        return event
+    if event_ref.isdigit():
+        return db.query(Event).filter(Event.id == int(event_ref)).first()
+    return None
+
+
+def _resolve_visible_event_ref(event_ref: str, db: Session) -> Event | None:
+    event = _resolve_event_ref(event_ref, db)
+    if not event or not _is_event_publicly_visible(event):
+        return None
+    return event
+
+
 def _proof_accel_path(photo: Photo) -> tuple[Path, str]:
     proof_abs = (Path(settings.STORAGE_ROOT) / photo.proof_path).resolve()
     proofs_root = (Path(settings.STORAGE_ROOT) / "proofs").resolve()
@@ -73,29 +107,20 @@ def list_events(db: Session = Depends(get_db)) -> list[EventOut]:
         .order_by(Event.date.desc())
         .all()
     )
-    return [
-        EventOut(
-            id=event.id,
-            slug=event.slug,
-            name=event.name,
-            date=event.date,
-            location=event.location,
-            status=event.status,
-            is_password_protected=event.is_password_protected,
-            access_hint=event.access_hint,
-            public_until=event.public_until,
-            archive_after=event.archive_after,
-            photo_price_pence=event.photo_price_pence,
-            effective_photo_price_pence=effective_photo_price_pence(event, app_settings),
-            currency=app_settings.currency,
-        )
-        for event in events
-    ]
+    return [_event_out(event, app_settings) for event in events]
 
 
-@router.get("/events/{event_id}/photos", response_model=PhotoListOut)
+@router.get("/events/{event_ref}", response_model=EventOut)
+def get_event(event_ref: str, db: Session = Depends(get_db)) -> EventOut:
+    event = _resolve_visible_event_ref(event_ref, db)
+    if not event:
+        raise HTTPException(404, "Event not found")
+    return _event_out(event, get_app_settings(db))
+
+
+@router.get("/events/{event_ref}/photos", response_model=PhotoListOut)
 def list_photos(
-    event_id: int,
+    event_ref: str,
     page: int = Query(1, ge=1),
     bib: Optional[str] = Query(None),
     start_time: Optional[str] = Query(None, description="Filter captured_at >= HH:MM"),
@@ -104,14 +129,14 @@ def list_photos(
     x_event_access: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> PhotoListOut:
-    event = db.query(Event).filter(Event.id == event_id).first()
-    if not event or not _is_event_publicly_visible(event):
+    event = _resolve_visible_event_ref(event_ref, db)
+    if not event:
         return PhotoListOut(photos=[], total=0, page=page, pages=1)
 
-    if event.is_password_protected and not verify_event_access_token(x_event_access, event_id):
+    if event.is_password_protected and not verify_event_access_token(x_event_access, event.id):
         raise HTTPException(401, "Event is locked. Unlock required.")
 
-    q = db.query(Photo).filter(Photo.event_id == event_id)
+    q = db.query(Photo).filter(Photo.event_id == event.id)
 
     if bib is not None:
         bib_value = bib.strip()
@@ -155,9 +180,9 @@ def list_photos(
             PhotoOut(
                 photo_id=p.id,
                 proof_url=(
-                    f"/api/events/{event_id}/photos/{p.id}/proof?access_token={x_event_access}"
+                    f"/api/events/{event.slug}/photos/{p.id}/proof?access_token={x_event_access}"
                     if event.is_password_protected and x_event_access
-                    else f"/proofs/{event_id}/{p.id}.jpg"
+                    else f"/proofs/{event.slug}/{p.id}.jpg"
                 ),
                 captured_at=p.captured_at,
             )
@@ -169,18 +194,18 @@ def list_photos(
     )
 
 
-@router.post("/events/{event_id}/unlock", response_model=EventUnlockOut)
+@router.post("/events/{event_ref}/unlock", response_model=EventUnlockOut)
 def unlock_event(
-    event_id: int,
+    event_ref: str,
     req: EventUnlockRequest,
     request: Request,
     db: Session = Depends(get_db),
 ) -> EventUnlockOut:
-    enforce_rate_limit(request, scope="event-unlock", limit=15, window_seconds=60, suffix=str(event_id))
-
-    event = db.query(Event).filter(Event.id == event_id).first()
-    if not event or not _is_event_publicly_visible(event):
+    event = _resolve_visible_event_ref(event_ref, db)
+    if not event:
         raise HTTPException(404, "Event not found")
+
+    enforce_rate_limit(request, scope="event-unlock", limit=15, window_seconds=60, suffix=str(event.id))
 
     if not event.is_password_protected:
         raise HTTPException(400, "Event is not password protected")
@@ -196,50 +221,49 @@ def unlock_event(
     return EventUnlockOut(access_token=token, expires_at=expires_at)
 
 
-@router.get("/events/{event_id}/photos/{photo_id}/proof")
+@router.get("/events/{event_ref}/photos/{photo_id}/proof")
 def get_event_proof(
-    event_id: int,
+    event_ref: str,
     photo_id: str,
     x_event_access: Optional[str] = Header(None),
     access_token: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> Response:
-    event = db.query(Event).filter(Event.id == event_id).first()
-    if not event or not _is_event_publicly_visible(event):
+    event = _resolve_visible_event_ref(event_ref, db)
+    if not event:
         raise HTTPException(404, "Event not found")
 
     photo = (
         db.query(Photo)
-        .filter(Photo.id == photo_id, Photo.event_id == event_id)
+        .filter(Photo.id == photo_id, Photo.event_id == event.id)
         .first()
     )
     if not photo:
         raise HTTPException(404, "Photo not found")
 
     provided_access = x_event_access or access_token
-    if event.is_password_protected and not verify_event_access_token(provided_access, event_id):
+    if event.is_password_protected and not verify_event_access_token(provided_access, event.id):
         raise HTTPException(401, "Event is locked. Unlock required.")
 
     return _photo_proof_response(photo, LEGACY_PROOF_CACHE_CONTROL)
 
 
-@public_router.get("/proofs/{event_id}/{photo_id}.jpg")
+@public_router.get("/proofs/{event_ref}/{photo_id}.jpg")
 def get_public_proof(
-    event_id: int,
+    event_ref: str,
     photo_id: str,
     db: Session = Depends(get_db),
 ) -> Response:
-    event = db.query(Event).filter(Event.id == event_id).first()
+    event = _resolve_visible_event_ref(event_ref, db)
     if (
         not event
-        or not _is_event_publicly_visible(event)
         or event.is_password_protected
     ):
         raise HTTPException(404, "Proof image not found")
 
     photo = (
         db.query(Photo)
-        .filter(Photo.id == photo_id, Photo.event_id == event_id)
+        .filter(Photo.id == photo_id, Photo.event_id == event.id)
         .first()
     )
     if not photo:

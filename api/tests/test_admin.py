@@ -25,6 +25,24 @@ def test_create_event_duplicate_slug(admin_client, test_event):
     assert resp.status_code == 409
 
 
+def test_create_event_rejects_invalid_slug(admin_client):
+    resp = admin_client.post("/api/admin/events", json={
+        "slug": "Spring_5K",
+        "name": "Invalid Slug",
+        "date": "2026-03-01T09:00:00Z",
+    })
+    assert resp.status_code == 422
+
+
+def test_create_event_rejects_all_numeric_slug(admin_client):
+    resp = admin_client.post("/api/admin/events", json={
+        "slug": "12345",
+        "name": "Numeric Slug",
+        "date": "2026-03-01T09:00:00Z",
+    })
+    assert resp.status_code == 422
+
+
 def test_create_event_requires_admin_token(client):
     resp = client.post("/api/admin/events", json={
         "slug": "no-auth",

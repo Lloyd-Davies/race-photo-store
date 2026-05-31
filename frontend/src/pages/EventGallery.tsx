@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Lock, Search, ShoppingCart, X } from 'lucide-react'
-import { fetchPhotos, fetchEvents, unlockEvent } from '../api/events'
+import { fetchEvent, fetchPhotos, unlockEvent } from '../api/events'
 import { useCartStore } from '../store/cart'
 import PhotoCard from '../components/PhotoCard'
 import { PhotoSkeleton } from '../components/Skeleton'
@@ -11,8 +11,8 @@ import type { Photo } from '../api/events'
 import { formatMoney } from '../utils/money'
 
 export default function EventGallery() {
-  const { eventId } = useParams<{ eventId: string }>()
-  const id = Number(eventId)
+  const { eventRef } = useParams<{ eventRef: string }>()
+  const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [bibInput, setBibInput] = useState('')
   const [startTimeInput, setStartTimeInput] = useState('')
@@ -27,43 +27,49 @@ export default function EventGallery() {
   const [unlocking, setUnlocking] = useState(false)
   const cartCount = useCartStore((s) => s.items.length)
 
-  const { data: events } = useQuery({
-    queryKey: ['events'],
-    queryFn: fetchEvents,
+  const { data: event, isLoading: eventLoading, error: eventError } = useQuery({
+    queryKey: ['event', eventRef],
+    queryFn: () => fetchEvent(eventRef as string),
+    enabled: !!eventRef,
   })
 
-  const event = events?.find((e) => e.id === id)
   const isEventLocked = !!event?.is_password_protected
 
-  const eventAccessKey = useMemo(() => `eventAccess:${id}`, [id])
+  useEffect(() => {
+    if (!event || !eventRef || eventRef === event.slug) return
+    navigate(`/events/${event.slug}`, { replace: true })
+  }, [event, eventRef, navigate])
+
+  const eventAccessKey = useMemo(() => event ? `eventAccess:${event.id}` : null, [event?.id])
 
   useEffect(() => {
-    if (isNaN(id)) {
+    if (!eventAccessKey) {
       setEventAccessToken(null)
       return
     }
     const token = sessionStorage.getItem(eventAccessKey)
     setEventAccessToken(token)
-  }, [eventAccessKey, id])
+  }, [eventAccessKey])
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['photos', id, page, bib, startTime, endTime, eventAccessToken],
-    queryFn: () => fetchPhotos(id, page, bib, startTime, endTime, eventAccessToken ?? undefined),
-    enabled: !isNaN(id) && events !== undefined && (!isEventLocked || !!eventAccessToken),
+  const { data, isLoading: photosLoading, error: photosError } = useQuery({
+    queryKey: ['photos', event?.slug, page, bib, startTime, endTime, eventAccessToken],
+    queryFn: () => fetchPhotos(event!.slug, page, bib, startTime, endTime, eventAccessToken ?? undefined),
+    enabled: !!event && (!isEventLocked || !!eventAccessToken),
     placeholderData: (prev) => prev,
   })
 
   useEffect(() => {
-    if (!isEventLocked || !error) return
-    const message = error instanceof Error ? error.message : ''
+    if (!isEventLocked || !photosError || !eventAccessKey) return
+    const message = photosError instanceof Error ? photosError.message : ''
     if (!message.startsWith('401:')) return
     sessionStorage.removeItem(eventAccessKey)
     setEventAccessToken(null)
     setUnlockError('Access expired. Please enter the event secret again.')
-  }, [error, eventAccessKey, isEventLocked])
+  }, [photosError, eventAccessKey, isEventLocked])
 
   async function handleUnlock(e: React.FormEvent) {
     e.preventDefault()
+    if (!event || !eventAccessKey) return
     if (!unlockSecret.trim()) {
       setUnlockError('Please enter the event secret.')
       return
@@ -72,7 +78,7 @@ export default function EventGallery() {
     setUnlocking(true)
     setUnlockError(null)
     try {
-      const unlocked = await unlockEvent(id, unlockSecret.trim())
+      const unlocked = await unlockEvent(event.slug, unlockSecret.trim())
       sessionStorage.setItem(eventAccessKey, unlocked.access_token)
       setEventAccessToken(unlocked.access_token)
       setUnlockSecret('')
@@ -104,11 +110,18 @@ export default function EventGallery() {
         </Link>
         <span className="text-surface-600">/</span>
         <span className="text-sm text-gray-200 font-medium">
-          {event?.name ?? `Event ${id}`}
+          {event?.name ?? 'Event'}
         </span>
       </div>
 
+      {eventError && (
+        <p className="text-red-400 text-sm text-center py-12">
+          Event not found or no longer available.
+        </p>
+      )}
+
       {/* Title + controls */}
+      {!eventError && (
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl font-bold text-content">{event?.name ?? 'Gallery'}</h1>
@@ -183,9 +196,10 @@ export default function EventGallery() {
           )}
         </div>
       </div>
+      )}
 
       {/* Gallery */}
-      {isEventLocked && !eventAccessToken && (
+      {!eventError && isEventLocked && !eventAccessToken && (
         <div className="max-w-md mx-auto bg-surface-900 border border-surface-700 rounded-xl p-6 mb-6">
           <div className="flex items-center gap-2 mb-2 text-content">
             <Lock size={16} className="text-sky-500" />
@@ -210,23 +224,24 @@ export default function EventGallery() {
         </div>
       )}
 
-      {isLoading && <PhotoSkeleton />}
-      {error && (
+      {!eventError && (eventLoading || photosLoading) && <PhotoSkeleton />}
+      {!eventError && photosError && (
         <p className="text-red-400 text-sm text-center py-12">Failed to load photos.</p>
       )}
-      {data && data.photos.length === 0 && (
+      {!eventError && data && data.photos.length === 0 && (
         <p className="text-gray-500 text-sm text-center py-12">
           {bib || startTime || endTime ? 'No photos found for this filter set.' : 'No photos in this event yet.'}
         </p>
       )}
-      {data && data.photos.length > 0 && (
+      {!eventError && data && data.photos.length > 0 && event && (
         <>
           <div className="masonry">
             {data.photos.map((photo) => (
               <PhotoCard
                 key={photo.photo_id}
                 photo={photo}
-                eventId={id}
+                eventId={event.id}
+                eventSlug={event.slug}
                 onFullscreen={setActivePhoto}
               />
             ))}
