@@ -31,6 +31,8 @@ export interface PhotoListResponse {
   pages: number
 }
 
+export const PHOTO_PAGE_SIZE = 60
+
 export interface EventUnlockResponse {
   access_token: string
   expires_at: string
@@ -73,7 +75,7 @@ export const fetchPhotos = (
   endTime?: string,
   eventAccessToken?: string,
 ) => {
-  const params = new URLSearchParams({ page: String(page), page_size: '60' })
+  const params = new URLSearchParams({ page: String(page), page_size: String(PHOTO_PAGE_SIZE) })
   if (bib) params.set('bib', bib)
   if (startTime) params.set('start_time', startTime)
   if (endTime) params.set('end_time', endTime)

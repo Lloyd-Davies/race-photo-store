@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -16,9 +16,11 @@ import {
   Tag,
   X,
 } from 'lucide-react'
-import { fetchEvent, fetchPhotos, unlockEvent } from '../api/events'
+import { fetchEvent, fetchPhotos, unlockEvent, PHOTO_PAGE_SIZE } from '../api/events'
 import type { Photo } from '../api/events'
 import Button from '../components/Button'
+import FocusViewer from '../components/FocusViewer'
+import type { FocusViewerDirection, FocusViewerItem } from '../components/FocusViewer'
 import PhotoCard from '../components/PhotoCard'
 import PublicPageShell from '../components/PublicPageShell'
 import { PhotoSkeleton } from '../components/Skeleton'
@@ -69,6 +71,26 @@ function FilterPill({ label, onClear }: FilterPillProps) {
   )
 }
 
+function toViewerItems(photos: Photo[], page: number): FocusViewerItem[] {
+  return photos.map((photo, indexOnPage) => ({
+    photo,
+    page,
+    indexOnPage,
+    position: (page - 1) * PHOTO_PAGE_SIZE + indexOnPage + 1,
+  }))
+}
+
+function mergeViewerItems(currentItems: FocusViewerItem[], nextItems: FocusViewerItem[]) {
+  const byId = new Map<string, FocusViewerItem>()
+  currentItems.forEach((item) => byId.set(item.photo.photo_id, item))
+  nextItems.forEach((item) => byId.set(item.photo.photo_id, item))
+
+  return Array.from(byId.values()).sort((a, b) => {
+    if (a.page !== b.page) return a.page - b.page
+    return a.indexOnPage - b.indexOnPage
+  })
+}
+
 export default function EventGallery() {
   const { eventRef } = useParams<{ eventRef: string }>()
   const navigate = useNavigate()
@@ -79,7 +101,12 @@ export default function EventGallery() {
   const [bib, setBib] = useState<string | undefined>()
   const [startTime, setStartTime] = useState<string | undefined>()
   const [endTime, setEndTime] = useState<string | undefined>()
-  const [activePhoto, setActivePhoto] = useState<Photo | null>(null)
+  const [activePhotoId, setActivePhotoId] = useState<string | null>(null)
+  const [viewerItems, setViewerItems] = useState<FocusViewerItem[]>([])
+  const [viewerLoadedPages, setViewerLoadedPages] = useState<Set<number>>(() => new Set())
+  const [viewerLoadingDirection, setViewerLoadingDirection] = useState<FocusViewerDirection | null>(null)
+  const [viewerLoadError, setViewerLoadError] = useState<string | null>(null)
+  const viewerOriginRef = useRef<HTMLElement | null>(null)
   const [eventAccessToken, setEventAccessToken] = useState<string | null>(null)
   const [unlockSecret, setUnlockSecret] = useState('')
   const [unlockError, setUnlockError] = useState<string | null>(null)
@@ -168,6 +195,98 @@ export default function EventGallery() {
     setStartTimeInput('')
     setEndTimeInput('')
     setPage(1)
+  }
+
+  const activeViewerIndex = viewerItems.findIndex((item) => item.photo.photo_id === activePhotoId)
+  const activeViewerItem = activeViewerIndex >= 0 ? viewerItems[activeViewerIndex] : null
+  const viewerPageNumbers = useMemo(() => Array.from(viewerLoadedPages), [viewerLoadedPages])
+  const minViewerPage = viewerPageNumbers.length ? Math.min(...viewerPageNumbers) : page
+  const maxViewerPage = viewerPageNumbers.length ? Math.max(...viewerPageNumbers) : page
+  const totalViewerPages = data?.pages ?? 0
+  const hasPreviousViewer = activeViewerIndex > 0 || minViewerPage > 1
+  const hasNextViewer = activeViewerIndex >= 0 && (activeViewerIndex < viewerItems.length - 1 || maxViewerPage < totalViewerPages)
+
+  const loadViewerPage = useCallback(
+    async (targetPage: number, direction: FocusViewerDirection) => {
+      if (!event?.slug || !data || targetPage < 1 || targetPage > data.pages) return []
+
+      if (viewerLoadedPages.has(targetPage)) {
+        return viewerItems.filter((item) => item.page === targetPage)
+      }
+
+      setViewerLoadingDirection(direction)
+      setViewerLoadError(null)
+      try {
+        const response = await fetchPhotos(
+          event.slug,
+          targetPage,
+          bib,
+          startTime,
+          endTime,
+          eventAccessToken ?? undefined,
+        )
+        const nextItems = toViewerItems(response.photos, targetPage)
+        setViewerItems((currentItems) => mergeViewerItems(currentItems, nextItems))
+        setViewerLoadedPages((currentPages) => {
+          const nextPages = new Set(currentPages)
+          nextPages.add(targetPage)
+          return nextPages
+        })
+        return nextItems
+      } catch {
+        setViewerLoadError('Could not load more photos.')
+        return []
+      } finally {
+        setViewerLoadingDirection(null)
+      }
+    },
+    [bib, data, endTime, event?.slug, eventAccessToken, startTime, viewerItems, viewerLoadedPages],
+  )
+
+  function handleOpenViewer(photo: Photo) {
+    if (!data) return
+    viewerOriginRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setViewerItems(toViewerItems(data.photos, data.page))
+    setViewerLoadedPages(new Set([data.page]))
+    setViewerLoadError(null)
+    setActivePhotoId(photo.photo_id)
+  }
+
+  function handleCloseViewer() {
+    setActivePhotoId(null)
+    setViewerItems([])
+    setViewerLoadedPages(new Set())
+    setViewerLoadingDirection(null)
+    setViewerLoadError(null)
+    requestAnimationFrame(() => viewerOriginRef.current?.focus())
+  }
+
+  async function handleViewerPrevious() {
+    if (viewerLoadingDirection) return
+    if (activeViewerIndex > 0) {
+      setActivePhotoId(viewerItems[activeViewerIndex - 1].photo.photo_id)
+      return
+    }
+    if (minViewerPage <= 1) return
+
+    const previousItems = await loadViewerPage(minViewerPage - 1, 'previous')
+    if (previousItems.length > 0) {
+      setActivePhotoId(previousItems[previousItems.length - 1].photo.photo_id)
+    }
+  }
+
+  async function handleViewerNext() {
+    if (viewerLoadingDirection) return
+    if (activeViewerIndex >= 0 && activeViewerIndex < viewerItems.length - 1) {
+      setActivePhotoId(viewerItems[activeViewerIndex + 1].photo.photo_id)
+      return
+    }
+    if (!totalViewerPages || maxViewerPage >= totalViewerPages) return
+
+    const nextItems = await loadViewerPage(maxViewerPage + 1, 'next')
+    if (nextItems.length > 0) {
+      setActivePhotoId(nextItems[0].photo.photo_id)
+    }
   }
 
   return (
@@ -451,7 +570,7 @@ export default function EventGallery() {
                     photo={photo}
                     eventId={event.id}
                     eventSlug={event.slug}
-                    onFullscreen={setActivePhoto}
+                    onFullscreen={handleOpenViewer}
                   />
                 ))}
               </div>
@@ -490,28 +609,24 @@ export default function EventGallery() {
         </section>
       )}
 
-      {activePhoto && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
-          onClick={() => setActivePhoto(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <button
-            type="button"
-            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            onClick={() => setActivePhoto(null)}
-            aria-label="Close fullscreen viewer"
-          >
-            <X size={24} />
-          </button>
-          <img
-            src={activePhoto.proof_url}
-            alt={`Photo ${activePhoto.photo_id}`}
-            className="max-h-full max-w-full object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+      {activePhotoId && activeViewerItem && event && data && (
+        <FocusViewer
+          items={viewerItems}
+          activePhotoId={activePhotoId}
+          total={data.total}
+          eventId={event.id}
+          eventSlug={event.slug}
+          photoPricePence={event.effective_photo_price_pence}
+          currency={event.currency}
+          hasPrevious={hasPreviousViewer}
+          hasNext={hasNextViewer}
+          loadingDirection={viewerLoadingDirection}
+          loadError={viewerLoadError}
+          onPrevious={handleViewerPrevious}
+          onNext={handleViewerNext}
+          onSelectPhoto={setActivePhotoId}
+          onClose={handleCloseViewer}
+        />
       )}
     </PublicPageShell>
   )
