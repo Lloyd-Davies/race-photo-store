@@ -84,14 +84,60 @@ def _extract_captured_at(image_path: Path) -> datetime | None:
         with Image.open(image_path) as img:
             exif = img.getexif()
 
-        dt_raw = exif.get(0x9003) or exif.get(0x0132)
+        try:
+            exif_ifd = exif.get_ifd(0x8769) or {}
+        except Exception:
+            exif_ifd = {}
+
+        nested_original_offsets = (
+            exif_ifd.get(0x9011),
+            exif_ifd.get(0x9010),
+            exif_ifd.get(0x9012),
+        )
+        nested_digitized_offsets = (
+            exif_ifd.get(0x9012),
+            exif_ifd.get(0x9010),
+            exif_ifd.get(0x9011),
+        )
+        flat_original_offsets = (exif.get(0x9011), exif.get(0x9010), exif.get(0x9012))
+        flat_digitized_offsets = (exif.get(0x9012), exif.get(0x9010), exif.get(0x9011))
+
+        capture_candidates = (
+            (
+                exif_ifd.get(0x9003),
+                nested_original_offsets + flat_original_offsets,
+            ),
+            (
+                exif_ifd.get(0x9004),
+                nested_digitized_offsets + flat_digitized_offsets,
+            ),
+            (
+                exif.get(0x9003),
+                nested_original_offsets + flat_original_offsets,
+            ),
+            (
+                exif.get(0x9004),
+                nested_digitized_offsets + flat_digitized_offsets,
+            ),
+            (
+                exif.get(0x0132),
+                (exif_ifd.get(0x9010),) + nested_original_offsets + flat_original_offsets,
+            ),
+        )
+        dt_raw, offset_raw = next(
+            (
+                (dt_value, next((offset for offset in offset_values if offset), None))
+                for dt_value, offset_values in capture_candidates
+                if dt_value
+            ),
+            (None, None),
+        )
         if not dt_raw:
             return None
 
         dt_text = str(dt_raw).split(".")[0]
         captured = datetime.strptime(dt_text, "%Y:%m:%d %H:%M:%S")
 
-        offset_raw = exif.get(0x9011) or exif.get(0x9010)
         tz = _parse_exif_offset(str(offset_raw) if offset_raw else None)
         if tz is None:
             return captured.replace(tzinfo=timezone.utc)

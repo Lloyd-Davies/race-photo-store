@@ -202,8 +202,12 @@ def test_ingest_sets_captured_at_from_exif(admin_client, db_session, test_event,
     original.parent.mkdir(parents=True, exist_ok=True)
 
     exif = Image.Exif()
-    exif[0x9003] = "2026:02:21 09:12:34"  # DateTimeOriginal
-    exif[0x0132] = "2026:02:21 09:12:34"  # DateTime
+    exif[0x0132] = "2026:05:31 09:46:43"  # DateTime/export time
+    exif[0x8769] = {
+        0x9003: "2026:05:30 16:57:24",  # DateTimeOriginal/capture time
+        0x9004: "2026:05:30 16:57:24",  # DateTimeDigitized
+        0x9011: "+01:00",               # OffsetTimeOriginal
+    }
 
     img = Image.new("RGB", (1000, 800), color=(120, 120, 120))
     img.save(original, format="JPEG", exif=exif.tobytes())
@@ -215,9 +219,7 @@ def test_ingest_sets_captured_at_from_exif(admin_client, db_session, test_event,
 
     photo = db_session.query(Photo).filter(Photo.id == pid).first()
     assert photo is not None
-    assert photo.captured_at is not None
-    assert photo.captured_at.hour == 9
-    assert photo.captured_at.minute == 12
+    assert photo.captured_at == datetime(2026, 5, 30, 15, 57, 24, tzinfo=timezone.utc)
 
 
 def test_update_event_fields(admin_client, db_session, test_event):

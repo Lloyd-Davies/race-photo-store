@@ -115,6 +115,21 @@ def test_list_photos(client, test_event, test_photos):
         assert "photo_id" in photo
 
 
+def test_list_photos_orders_by_captured_at(client, db_session, test_event, test_photos):
+    from datetime import datetime, timezone
+
+    test_photos[0].captured_at = datetime(2026, 2, 18, 10, 15, tzinfo=timezone.utc)
+    test_photos[1].captured_at = datetime(2026, 2, 18, 9, 5, tzinfo=timezone.utc)
+    test_photos[2].captured_at = datetime(2026, 2, 18, 9, 45, tzinfo=timezone.utc)
+    db_session.flush()
+
+    resp = client.get(f"/api/events/{test_event.id}/photos")
+    assert resp.status_code == 200
+
+    ids = [photo["photo_id"] for photo in resp.json()["photos"]]
+    assert ids == [test_photos[1].id, test_photos[2].id, test_photos[0].id]
+
+
 def test_list_photos_by_slug(client, test_event, test_photos):
     resp = client.get(f"/api/events/{test_event.slug}/photos")
     assert resp.status_code == 200
