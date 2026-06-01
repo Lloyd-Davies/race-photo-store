@@ -8,7 +8,7 @@ import { Skeleton } from '../components/Skeleton'
 import { useSiteConfig } from '../context/SiteConfig'
 
 export default function EventList() {
-  const { site_name, site_tagline } = useSiteConfig()
+  const { site_name } = useSiteConfig()
   const { data: events, isLoading, error } = useQuery({
     queryKey: ['events'],
     queryFn: fetchEvents,
@@ -18,23 +18,17 @@ export default function EventList() {
 
   return (
     <PublicPageShell className="space-y-10">
-      <section className="grid gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(320px,0.48fr)] lg:items-end">
-        <div className="max-w-3xl">
+      <section className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] lg:items-end">
+        <div className="min-w-0 max-w-3xl">
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-content-muted">
             Event photo galleries
           </p>
-          <h1 className="mt-4 text-4xl font-semibold leading-tight text-content sm:text-5xl">
+          <h1 className="mt-4 break-words text-4xl font-semibold leading-tight text-content sm:text-5xl">
             {site_name}
           </h1>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-content-muted sm:text-lg">
-            {site_tagline}
-          </p>
-          <p className="mt-5 max-w-2xl text-sm leading-6 text-content-muted">
-            Find your race, browse proofs quickly, select the photos you want, and check out securely.
-          </p>
         </div>
 
-        <div className="rounded-lg border border-surface-700 bg-surface-900 p-5">
+        <div className="min-w-0 rounded-lg border border-surface-700 bg-surface-900 p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-3xl font-semibold text-content">{eventCount}</p>
@@ -48,21 +42,15 @@ export default function EventList() {
               <ArrowRight size={22} className="text-content-muted" />
             )}
           </div>
-          <p className="mt-4 text-sm leading-6 text-content-muted">
-            Galleries are arranged by event date. Protected events require the event secret before photos load.
-          </p>
         </div>
       </section>
 
       <section aria-labelledby="events-heading" className="space-y-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 id="events-heading" className="text-2xl font-semibold text-content">
               Events
             </h2>
-            <p className="mt-1 text-sm text-content-muted">
-              Choose your gallery to start browsing.
-            </p>
           </div>
           {events && events.length > 0 && (
             <Link

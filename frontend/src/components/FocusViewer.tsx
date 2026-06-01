@@ -153,31 +153,11 @@ export default function FocusViewer({
       tabIndex={-1}
       className="fixed inset-0 z-50 flex flex-col bg-black text-white focus:outline-none"
     >
-      <header
-        className="shrink-0 border-b border-white/10 px-4 py-3"
-        style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))' }}
-      >
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/55">
-              Focus
-            </p>
-            <h2 id="focus-viewer-title" className="mt-0.5 truncate text-sm font-semibold text-white sm:text-base">
-              Photo {activeItem.position} of {total}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/15 bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            aria-label="Close focus viewer"
-          >
-            <X size={21} />
-          </button>
-        </div>
-      </header>
+      <h2 id="focus-viewer-title" className="sr-only">
+        Photo {activeItem.position} of {total}
+      </h2>
 
-      <main className="mx-auto grid min-h-0 w-full max-w-7xl flex-1 grid-cols-[minmax(0,1fr)] gap-3 px-3 py-3 sm:grid-cols-[3rem_minmax(0,1fr)_3rem] sm:px-4">
+      <main className="mx-auto grid min-h-0 w-full max-w-7xl flex-1 grid-cols-[minmax(0,1fr)] gap-3 px-0 py-0 sm:grid-cols-[3rem_minmax(0,1fr)_3rem] sm:px-4 sm:py-3">
         <button
           type="button"
           onClick={onPrevious}
@@ -189,7 +169,7 @@ export default function FocusViewer({
         </button>
 
         <div
-          className="relative flex min-h-0 items-center justify-center overflow-hidden rounded bg-white/[0.04] touch-pan-y"
+          className="relative flex min-h-0 items-center justify-center overflow-hidden bg-white/[0.04] touch-pan-y sm:rounded"
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
         >
@@ -200,7 +180,30 @@ export default function FocusViewer({
             draggable={false}
           />
 
-          <div className="absolute inset-x-3 top-3 flex items-center justify-between sm:hidden">
+          <div
+            className="absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-3"
+            style={{ top: 'calc(0.75rem + env(safe-area-inset-top, 0px))' }}
+          >
+            <div className="min-w-0 rounded bg-black/55 px-3 py-2 text-white shadow-lg backdrop-blur">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/55">
+                Focus
+              </p>
+              <p className="mt-0.5 truncate text-sm font-semibold">
+                Photo {activeItem.position} of {total}
+              </p>
+            </div>
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={onClose}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/20 bg-black/55 text-white shadow-lg backdrop-blur transition-colors hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              aria-label="Close focus viewer"
+            >
+              <X size={21} />
+            </button>
+          </div>
+
+          <div className="absolute inset-x-3 top-1/2 z-10 flex -translate-y-1/2 items-center justify-between sm:hidden">
             <button
               type="button"
               onPointerDown={(e) => e.stopPropagation()}
@@ -249,7 +252,7 @@ export default function FocusViewer({
               </p>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-[auto_auto] lg:flex lg:items-center">
+            <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:flex lg:items-center">
               <button
                 type="button"
                 onClick={toggleSelected}
@@ -271,7 +274,9 @@ export default function FocusViewer({
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-white px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
                   <ShoppingBag size={17} />
-                  {selectedCount} selected - {formatMoney(selectedTotal, currency)}
+                  <span className="truncate">
+                    {selectedCount} selected - {formatMoney(selectedTotal, currency)}
+                  </span>
                 </Link>
               ) : (
                 <span className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/40">

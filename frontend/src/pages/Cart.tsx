@@ -62,7 +62,7 @@ export default function Cart() {
 
   if (items.length === 0) {
     return (
-      <div className="max-w-xl mx-auto px-4 py-20 text-center">
+      <div className="mx-auto max-w-xl min-w-0 px-4 py-20 text-center">
         <p className="text-gray-400 mb-6">Your cart is empty.</p>
         <Link to="/">
           <Button variant="secondary">Browse events</Button>
@@ -72,7 +72,7 @@ export default function Cart() {
   }
 
   return (
-    <div className="max-w-xl mx-auto px-4 sm:px-6 py-10">
+    <div className="mx-auto max-w-xl min-w-0 px-4 py-10 sm:px-6">
       <Link
         to={galleryPath}
         className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-6 transition-colors"
@@ -143,7 +143,7 @@ export default function Cart() {
         <label className="block text-sm text-gray-300 mb-2 font-medium">
           <Mail size={14} className="inline mr-1.5 text-sky-500" />
           Email <span className="text-red-400">*</span>
-          <span className="ml-1 font-normal text-gray-500">— order confirmation &amp; download link</span>
+          <span className="block font-normal text-gray-500 sm:ml-1 sm:inline">- order confirmation &amp; download link</span>
         </label>
         <input
           type="email"
@@ -161,7 +161,7 @@ export default function Cart() {
         </p>
       )}
 
-      <div className="flex gap-3">
+      <div className="grid gap-3 sm:flex">
         <Button
           className="flex-1"
           loading={checkoutMut.isPending}

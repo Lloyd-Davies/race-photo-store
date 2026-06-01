@@ -37,6 +37,7 @@ class EventOut(BaseModel):
     photo_price_pence: Optional[int] = None
     effective_photo_price_pence: int
     currency: str
+    cover_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

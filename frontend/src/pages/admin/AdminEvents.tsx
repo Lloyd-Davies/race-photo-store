@@ -1,8 +1,16 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, UploadCloud, CalendarDays, MapPin, Pencil, Trash2 } from 'lucide-react'
-import { fetchAdminEvents, createEvent, updateEvent, deleteEvent, type Event } from '../../api/events'
+import { Plus, UploadCloud, CalendarDays, ImageIcon, MapPin, Pencil, Trash2 } from 'lucide-react'
+import {
+  fetchAdminEvents,
+  createEvent,
+  updateEvent,
+  uploadEventCover,
+  clearEventCover,
+  deleteEvent,
+  type Event,
+} from '../../api/events'
 import Button from '../../components/Button'
 import { Skeleton } from '../../components/Skeleton'
 import { formatMoney } from '../../utils/money'
@@ -62,6 +70,8 @@ export default function AdminEvents() {
   const [deleteFiles, setDeleteFiles] = useState(false)
   const [forceInfo, setForceInfo] = useState<{ ordersAffected: number } | null>(null)
   const [forceConfirmed, setForceConfirmed] = useState(false)
+  const [coverFile, setCoverFile] = useState<File | null>(null)
+  const [coverInputKey, setCoverInputKey] = useState(0)
 
   const { data: events, isLoading } = useQuery({
     queryKey: ['admin-events'],
@@ -107,6 +117,27 @@ export default function AdminEvents() {
       qc.invalidateQueries({ queryKey: ['events'] })
       setEditingEventId(null)
       setEditForm(null)
+      setCoverFile(null)
+    },
+  })
+
+  const uploadCoverMut = useMutation({
+    mutationFn: ({ eventId, file }: { eventId: number; file: File }) => uploadEventCover(eventId, file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-events'] })
+      qc.invalidateQueries({ queryKey: ['events'] })
+      setCoverFile(null)
+      setCoverInputKey((value) => value + 1)
+    },
+  })
+
+  const clearCoverMut = useMutation({
+    mutationFn: (eventId: number) => clearEventCover(eventId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-events'] })
+      qc.invalidateQueries({ queryKey: ['events'] })
+      setCoverFile(null)
+      setCoverInputKey((value) => value + 1)
     },
   })
 
@@ -201,12 +232,19 @@ export default function AdminEvents() {
       override_price: event.photo_price_pence !== null && event.photo_price_pence !== undefined,
       photo_price_pounds: event.photo_price_pence ? (event.photo_price_pence / 100).toFixed(2) : '',
     })
+    setCoverFile(null)
+    setCoverInputKey((value) => value + 1)
   }
 
   function saveEdit(eventId: number) {
     if (!editForm || !editForm.name || !editForm.date) return
     if (editForm.override_price && (!editForm.photo_price_pounds || Number(editForm.photo_price_pounds) < 0)) return
     updateMut.mutate({ eventId, body: editForm })
+  }
+
+  function uploadCover(eventId: number) {
+    if (!coverFile) return
+    uploadCoverMut.mutate({ eventId, file: coverFile })
   }
 
   return (
@@ -361,8 +399,8 @@ export default function AdminEvents() {
               key={event.id}
               className="bg-surface-900 border border-surface-700 rounded-xl p-4"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="flex-1 min-w-0">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
                 {editingEventId === event.id && editForm ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <input
@@ -446,19 +484,82 @@ export default function AdminEvents() {
                         />
                       </>
                     )}
+                    <div className="min-w-0 space-y-3 rounded-lg border border-surface-700 bg-surface-950 p-3 sm:col-span-2">
+                      <div className="flex min-w-0 flex-col gap-3 md:flex-row">
+                        <div className="relative aspect-[16/9] w-full min-w-0 overflow-hidden rounded border border-surface-700 bg-surface-900 md:w-56 md:shrink-0">
+                          {event.cover_url ? (
+                            <img
+                              src={event.cover_url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <span className="flex h-full w-full items-center justify-center text-content-muted">
+                              <ImageIcon size={24} />
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-content">Cover image</p>
+                            <p className="text-xs text-content-muted">
+                              Upload a dedicated cover for the public event tile.
+                            </p>
+                          </div>
+                          <input
+                            key={coverInputKey}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            onChange={(e) => setCoverFile(e.currentTarget.files?.[0] ?? null)}
+                            className="block w-full min-w-0 text-xs text-content file:mr-3 file:rounded file:border-0 file:bg-surface-700 file:px-3 file:py-2 file:text-xs file:font-medium file:text-content hover:file:bg-surface-600"
+                          />
+                          {coverFile && (
+                            <p className="truncate text-xs text-content-muted">
+                              {coverFile.name}
+                            </p>
+                          )}
+                          {(uploadCoverMut.error || clearCoverMut.error) && (
+                            <p className="text-xs text-red-400">
+                              {((uploadCoverMut.error || clearCoverMut.error) as Error).message}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => uploadCover(event.id)}
+                              loading={uploadCoverMut.isPending}
+                              disabled={!coverFile || uploadCoverMut.isPending}
+                            >
+                              Upload cover
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => clearCoverMut.mutate(event.id)}
+                              loading={clearCoverMut.isPending}
+                              disabled={!event.cover_url || clearCoverMut.isPending}
+                            >
+                              Clear cover
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <>
                     <p className="font-medium text-gray-100 truncate">{event.name}</p>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                      <span className="flex items-center gap-1">
+                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                      <span className="flex items-center gap-1 whitespace-nowrap">
                         <CalendarDays size={11} />
                         {new Date(event.date).toLocaleDateString('en-GB')}
                       </span>
                       {event.location && (
-                        <span className="flex items-center gap-1">
+                        <span className="flex min-w-0 items-center gap-1">
                           <MapPin size={11} />
-                          {event.location}
+                          <span className="truncate">{event.location}</span>
                         </span>
                       )}
                       {event.is_password_protected && (
@@ -480,7 +581,7 @@ export default function AdminEvents() {
                 )}
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0 flex-wrap sm:flex-nowrap justify-end">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                 <span
                   className={`text-xs rounded px-2 py-0.5 ${
                     event.status === 'ACTIVE'
@@ -505,6 +606,7 @@ export default function AdminEvents() {
                       onClick={() => {
                         setEditingEventId(null)
                         setEditForm(null)
+                        setCoverFile(null)
                       }}
                     >
                       Cancel

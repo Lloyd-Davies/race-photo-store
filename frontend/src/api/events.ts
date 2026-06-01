@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPutForm } from './client'
 
 export interface Event {
   id: number
@@ -14,6 +14,7 @@ export interface Event {
   photo_price_pence?: number | null
   effective_photo_price_pence: number
   currency: string
+  cover_url?: string | null
   photo_count?: number
   order_count?: number
 }
@@ -117,6 +118,15 @@ export const updateEvent = (
     clear_photo_price?: boolean
   }
 ) => apiPatch<EventCreatedOut>(`/admin/events/${eventId}`, body)
+
+export const uploadEventCover = (eventId: number, file: File) => {
+  const body = new FormData()
+  body.append('file', file)
+  return apiPutForm<EventCreatedOut>(`/admin/events/${eventId}/cover`, body)
+}
+
+export const clearEventCover = (eventId: number) =>
+  apiDelete<EventCreatedOut>(`/admin/events/${eventId}/cover`)
 
 export const ingestPhotos = (eventId: number) =>
   apiPost<IngestResult>(`/admin/events/${eventId}/ingest`)

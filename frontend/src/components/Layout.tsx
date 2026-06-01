@@ -14,19 +14,19 @@ export default function Layout() {
   const { site_name } = useSiteConfig()
 
   return (
-    <div className="min-h-screen flex flex-col bg-surface-950">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-surface-950">
       {/* Top nav */}
       <header className="sticky top-0 z-40 bg-surface-950/90 backdrop-blur border-b border-surface-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+        <div className="mx-auto flex h-14 w-full max-w-7xl min-w-0 items-center justify-between px-4 sm:px-6">
           <Link
             to="/"
-            className="flex items-center gap-2 font-semibold text-content hover:text-sky-500 transition-colors"
+            className="flex min-w-0 items-center gap-2 font-semibold text-content transition-colors hover:text-sky-500"
           >
-            <Camera size={20} className="text-sky-500" />
-            <span>{site_name}</span>
+            <Camera size={20} className="shrink-0 text-sky-500" />
+            <span className="truncate">{site_name}</span>
           </Link>
 
-          <nav className="flex items-center gap-4">
+          <nav className="flex shrink-0 items-center gap-3 sm:gap-4">
             <button
               onClick={() => setDrawerOpen(true)}
               className="relative flex items-center gap-2 rounded px-2 py-1.5 text-sm text-content-muted transition-colors hover:bg-surface-900 hover:text-content"

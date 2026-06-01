@@ -55,6 +55,8 @@ from photostore.pricing import effective_photo_price_pence, get_app_settings, no
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+COVER_MAX_DIMENSION = 1800
+
 
 def _parse_exif_offset(raw_offset: str | None) -> timezone | None:
     if not raw_offset:
@@ -149,6 +151,96 @@ def _extract_captured_at(image_path: Path) -> datetime | None:
 
 def _order_subtotal_pence(order: Order) -> int:
     return sum(max(0, item.unit_price_pence - item.discount_applied_pence) for item in order.items)
+
+
+def _event_cover_url(event: Event) -> str | None:
+    if not event.cover_path:
+        return None
+
+    version = ""
+    if event.cover_updated_at:
+        updated_at = event.cover_updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        version = f"?v={int(updated_at.timestamp())}"
+    return f"/api/events/{event.slug}/cover{version}"
+
+
+def _cover_destination(event: Event) -> tuple[Path, str]:
+    rel_path = f"covers/{event.slug}/cover.jpg"
+    return Path(settings.STORAGE_ROOT) / rel_path, rel_path
+
+
+def _delete_cover_file(event: Event) -> None:
+    if not event.cover_path:
+        return
+
+    storage_root = Path(settings.STORAGE_ROOT).resolve()
+    cover_abs = (storage_root / event.cover_path).resolve()
+    covers_root = (storage_root / "covers").resolve()
+    try:
+        cover_abs.relative_to(covers_root)
+    except ValueError:
+        return
+
+    cover_abs.unlink(missing_ok=True)
+    try:
+        cover_abs.parent.rmdir()
+    except OSError:
+        pass
+
+
+def _process_cover_upload(event: Event, file: UploadFile) -> tuple[str, int]:
+    try:
+        from PIL import Image, ImageOps, UnidentifiedImageError
+    except Exception:
+        raise HTTPException(500, "Image processing is not available")
+
+    dest_path, rel_path = _cover_destination(event)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    size_bytes = 0
+    upload_tmp = tempfile.NamedTemporaryFile(dir=dest_path.parent, suffix=".upload", delete=False)
+    output_tmp = tempfile.NamedTemporaryFile(dir=dest_path.parent, suffix=".jpg.tmp", delete=False)
+    upload_tmp_path = Path(upload_tmp.name)
+    output_tmp_path = Path(output_tmp.name)
+    output_tmp.close()
+
+    try:
+        with upload_tmp:
+            while True:
+                chunk = file.file.read(262144)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if size_bytes > settings.MAX_PHOTO_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Uploaded file exceeds max size ({settings.MAX_PHOTO_UPLOAD_BYTES} bytes)",
+                    )
+                upload_tmp.write(chunk)
+
+        try:
+            with Image.open(upload_tmp_path) as img:
+                img = ImageOps.exif_transpose(img)
+                img = img.convert("RGB")
+                try:
+                    resample = Image.Resampling.LANCZOS
+                except AttributeError:
+                    resample = Image.LANCZOS
+                img.thumbnail((COVER_MAX_DIMENSION, COVER_MAX_DIMENSION), resample)
+                img.save(output_tmp_path, format="JPEG", quality=85, optimize=True)
+        except (UnidentifiedImageError, OSError, ValueError):
+            raise HTTPException(400, "Cover must be a valid image file")
+
+        output_tmp_path.replace(dest_path)
+        os.chmod(dest_path, 0o644)
+        return rel_path, size_bytes
+    except Exception:
+        output_tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        upload_tmp_path.unlink(missing_ok=True)
 
 
 def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None) -> AdminOrderOut:
@@ -248,6 +340,7 @@ def list_admin_events(db: Session = Depends(get_db)) -> list[AdminEventOut]:
                 photo_price_pence=event.photo_price_pence,
                 effective_photo_price_pence=effective_photo_price_pence(event, app_settings),
                 currency=app_settings.currency,
+                cover_url=_event_cover_url(event),
                 photo_count=photo_count,
                 order_count=order_count,
             )
@@ -428,6 +521,47 @@ def get_photo_ids(event_id: int, db: Session = Depends(get_db)) -> PhotoIdsOut:
     return PhotoIdsOut(photo_ids=ids)
 
 
+@router.put(
+    "/events/{event_id}/cover",
+    response_model=EventCreatedOut,
+    dependencies=[Depends(require_admin)],
+)
+def upload_event_cover(
+    event_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> EventCreatedOut:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    cover_path, _ = _process_cover_upload(event, file)
+    event.cover_path = cover_path
+    event.cover_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return EventCreatedOut(id=event.id, slug=event.slug)
+
+
+@router.delete(
+    "/events/{event_id}/cover",
+    response_model=EventCreatedOut,
+    dependencies=[Depends(require_admin)],
+)
+def delete_event_cover(
+    event_id: int,
+    db: Session = Depends(get_db),
+) -> EventCreatedOut:
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    _delete_cover_file(event)
+    event.cover_path = None
+    event.cover_updated_at = None
+    db.commit()
+    return EventCreatedOut(id=event.id, slug=event.slug)
+
+
 @router.delete(
     "/events/{event_id}",
     response_model=DeleteEventResult,
@@ -478,6 +612,12 @@ def delete_event(
             },
         )
 
+    if delete_files:
+        _delete_cover_file(event)
+    event.cover_path = None
+    event.cover_updated_at = None
+    db.flush()
+
     # Delete in FK-safe order, using the same subquery to avoid a Python-side list
     tags_deleted = (
         db.query(PhotoTag)
@@ -501,7 +641,7 @@ def delete_event(
         import shutil
         storage_root = Path(settings.STORAGE_ROOT)
         try:
-            for kind in ("proofs", "originals"):
+            for kind in ("proofs", "originals", "covers"):
                 target = storage_root / kind / slug
                 if target.exists():
                     shutil.rmtree(target)

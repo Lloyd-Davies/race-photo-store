@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ArrowRight, CalendarDays, Lock, MapPin, Tag } from 'lucide-react'
+import { ArrowRight, CalendarDays, ImageIcon, Lock, MapPin, Tag } from 'lucide-react'
 import type { Event } from '../api/events'
 import { formatMoney } from '../utils/money'
 
@@ -22,16 +22,23 @@ export default function EventTile({ event }: EventTileProps) {
       className="group grid min-h-52 overflow-hidden rounded-lg border border-surface-700 bg-surface-900 transition-colors hover:border-content/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]"
     >
       <div className="relative min-h-32 overflow-hidden bg-surface-800">
-        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgb(var(--s-800))_0%,rgb(var(--s-900))_48%,rgb(var(--s-700))_100%)]" />
-        <div className="absolute inset-x-5 top-5 h-px bg-content/10" />
-        <div className="absolute bottom-5 left-5 right-5">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-content-muted">
-            Race gallery
-          </p>
-          <p className="mt-2 max-w-44 text-2xl font-semibold leading-none text-content/90">
-            {new Date(event.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-          </p>
-        </div>
+        {event.cover_url ? (
+          <img
+            src={event.cover_url}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center bg-[linear-gradient(135deg,rgb(var(--s-800))_0%,rgb(var(--s-900))_48%,rgb(var(--s-700))_100%)] text-content-muted">
+            <ImageIcon size={30} />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent" />
+        <p className="absolute bottom-5 left-5 right-5 max-w-44 text-2xl font-semibold leading-none text-white">
+          {new Date(event.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+        </p>
       </div>
 
       <div className="flex min-w-0 flex-col justify-between p-5">

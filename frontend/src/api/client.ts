@@ -4,18 +4,18 @@ const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken'
 
 const BASE = '/api'
 
-function getHeaders(extra?: HeadersInit): Headers {
+function getHeaders(extra?: HeadersInit, json = true): Headers {
   const h = new Headers(extra)
-  h.set('Content-Type', 'application/json')
+  if (json) h.set('Content-Type', 'application/json')
   const token = sessionStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
   if (token) h.set('Authorization', `Bearer ${token}`)
   return h
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, jsonHeaders = true): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: getHeaders(init?.headers),
+    headers: getHeaders(init?.headers, jsonHeaders),
   })
 
   if (!res.ok) {
@@ -51,6 +51,16 @@ export const apiPost = <T>(path: string, body?: unknown) =>
     method: 'POST',
     body: JSON.stringify(body),
   })
+
+export const apiPutForm = <T>(path: string, body: FormData) =>
+  request<T>(
+    path,
+    {
+      method: 'PUT',
+      body,
+    },
+    false,
+  )
 
 export const apiPatch = <T>(path: string, body?: unknown) =>
   request<T>(path, {

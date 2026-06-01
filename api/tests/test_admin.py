@@ -149,9 +149,10 @@ def test_admin_session_requires_admin_token(client):
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
 
-def test_ingest_photos(admin_client, test_event, tmp_path, monkeypatch):
+def test_ingest_photos(admin_client, db_session, test_event, tmp_path, monkeypatch):
     import os
     from photostore.config import settings
+    from photostore.models import Event
 
     storage = tmp_path / "photos"
     monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
@@ -170,6 +171,8 @@ def test_ingest_photos(admin_client, test_event, tmp_path, monkeypatch):
     data = resp.json()
     assert data["ingested"] == 3
     assert data["skipped"] == 0
+    refreshed = db_session.query(Event).filter(Event.id == test_event.id).first()
+    assert refreshed.cover_path is None
 
 
 def test_ingest_skips_existing_photos(admin_client, test_event, test_photos):
@@ -260,6 +263,75 @@ def test_update_event_price_override_and_clear(admin_client, db_session, test_ev
     assert resp.status_code == 200
     db_session.refresh(refreshed)
     assert refreshed.photo_price_pence is None
+
+
+def test_upload_event_cover_replace_and_clear(admin_client, db_session, test_event, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    resp = _upload_cover(admin_client, test_event.id)
+    assert resp.status_code == 200
+
+    refreshed = db_session.query(Event).filter(Event.id == test_event.id).first()
+    assert refreshed.cover_path == f"covers/{test_event.slug}/cover.jpg"
+    assert refreshed.cover_updated_at is not None
+    assert (storage / "covers" / test_event.slug / "cover.jpg").exists()
+
+    listed = admin_client.get("/api/admin/events")
+    assert listed.status_code == 200
+    event = next(item for item in listed.json() if item["id"] == test_event.id)
+    assert "cover_photo_id" not in event
+    assert event["cover_url"].startswith(f"/api/events/{test_event.slug}/cover?v=")
+    first_url = event["cover_url"]
+
+    refreshed.cover_updated_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    db_session.flush()
+    old_url = next(item for item in admin_client.get("/api/admin/events").json() if item["id"] == test_event.id)["cover_url"]
+    assert old_url != first_url
+
+    replace = _upload_cover(admin_client, test_event.id, color=(20, 140, 90))
+    assert replace.status_code == 200
+    replaced_url = next(item for item in admin_client.get("/api/admin/events").json() if item["id"] == test_event.id)["cover_url"]
+    assert replaced_url != old_url
+
+    public_cover = admin_client.get(f"/api/events/{test_event.slug}/cover")
+    assert public_cover.status_code == 200
+    assert public_cover.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/cover.jpg")
+
+    clear = admin_client.delete(f"/api/admin/events/{test_event.id}/cover")
+    assert clear.status_code == 200
+    db_session.refresh(refreshed)
+    assert refreshed.cover_path is None
+    assert refreshed.cover_updated_at is None
+    assert not (storage / "covers" / test_event.slug / "cover.jpg").exists()
+
+
+def test_upload_event_cover_rejects_invalid_image(admin_client, test_event, tmp_path, monkeypatch):
+    from photostore.config import settings
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    resp = admin_client.put(
+        f"/api/admin/events/{test_event.id}/cover",
+        files={"file": ("cover.txt", b"not an image", "text/plain")},
+    )
+    assert resp.status_code == 400
+    assert "valid image" in resp.json()["detail"]
+    assert not (storage / "covers" / test_event.slug / "cover.jpg").exists()
+
+
+def test_upload_event_cover_requires_admin(client, test_event):
+    resp = client.put(
+        f"/api/admin/events/{test_event.id}/cover",
+        files={"file": ("cover.jpg", _cover_image_bytes(), "image/jpeg")},
+    )
+    assert resp.status_code == 401
 
 
 def test_update_event_protection_requires_password(admin_client, test_event):
@@ -510,6 +582,7 @@ def test_delete_event_removes_photos_and_tags(admin_client, db_session, test_eve
 
     # Add a bib tag
     db_session.add(PhotoTag(photo_id=test_photos[0].id, tag_type="bib", value="42", confidence=0.9))
+    test_event.cover_path = f"covers/{test_event.slug}/cover.jpg"
     db_session.flush()
 
     resp = admin_client.delete(f"/api/admin/events/{test_event.id}")
@@ -570,7 +643,7 @@ def test_delete_event_with_files(admin_client, db_session, test_event, test_phot
     storage = tmp_path / "photos"
     monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
 
-    for kind in ("proofs", "originals"):
+    for kind in ("proofs", "originals", "covers"):
         d = storage / kind / test_event.slug
         d.mkdir(parents=True, exist_ok=True)
         (d / "test.jpg").write_bytes(b"x")
@@ -580,6 +653,7 @@ def test_delete_event_with_files(admin_client, db_session, test_event, test_phot
     assert resp.json()["files_deleted"] is True
     assert not (storage / "proofs" / test_event.slug).exists()
     assert not (storage / "originals" / test_event.slug).exists()
+    assert not (storage / "covers" / test_event.slug).exists()
 
 
 def test_delete_event_unknown(admin_client):
@@ -588,6 +662,23 @@ def test_delete_event_unknown(admin_client):
 
 
 # ── upload_photo ─────────────────────────────────────────────────────────────
+
+def _cover_image_bytes(color=(80, 120, 180)) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (1200, 800), color=color).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _upload_cover(client, event_id: int, color=(80, 120, 180)):
+    return client.put(
+        f"/api/admin/events/{event_id}/cover",
+        files={"file": ("cover.jpg", _cover_image_bytes(color), "image/jpeg")},
+    )
+
 
 def _upload(client, event_id: int, photo_id: str, kind: str, data: bytes = b"\xff\xd8\xff\xe0test"):
     return client.post(

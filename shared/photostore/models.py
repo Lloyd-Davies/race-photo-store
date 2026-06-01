@@ -74,6 +74,8 @@ class Event(Base):
     public_until = Column(DateTime(timezone=True))
     archive_after = Column(DateTime(timezone=True))
     photo_price_pence = Column(Integer)
+    cover_path = Column(String)
+    cover_updated_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     photos = relationship("Photo", back_populates="event")

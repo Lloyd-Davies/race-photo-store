@@ -20,6 +20,40 @@ def test_get_event_by_slug(client, test_event):
     assert data["id"] == test_event.id
     assert data["slug"] == test_event.slug
     assert data["name"] == test_event.name
+    assert data["cover_url"] is None
+
+
+def test_event_cover_fields_and_endpoint(client, db_session, test_event, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    cover = storage / "covers" / test_event.slug / "cover.jpg"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(b"FAKEJPEG")
+
+    updated_at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    test_event.cover_path = f"covers/{test_event.slug}/cover.jpg"
+    test_event.cover_updated_at = updated_at
+    db_session.flush()
+    expected_url = f"/api/events/{test_event.slug}/cover?v={int(updated_at.timestamp())}"
+
+    listed = client.get("/api/events")
+    assert listed.status_code == 200
+    event = listed.json()[0]
+    assert "cover_photo_id" not in event
+    assert event["cover_url"] == expected_url
+
+    detail = client.get(f"/api/events/{test_event.slug}")
+    assert detail.status_code == 200
+    assert detail.json()["cover_url"] == expected_url
+
+    cover_resp = client.get(f"/api/events/{test_event.slug}/cover")
+    assert cover_resp.status_code == 200
+    assert cover_resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/cover.jpg")
+    assert cover_resp.headers["Cache-Control"] == "public, max-age=2592000, immutable"
 
 
 def test_get_event_by_legacy_id_alias(client, test_event):
@@ -79,7 +113,7 @@ def test_list_events_enforces_visibility_windows(client, db_session):
 def test_get_event_enforces_visibility_windows(client, db_session):
     from datetime import datetime, timedelta, timezone
 
-    from photostore.models import Event, EventStatus
+    from photostore.models import Event, EventStatus, Photo
 
     now = datetime.now(timezone.utc)
     expired = Event(
@@ -399,6 +433,36 @@ def test_get_public_proof_expired_event_returns_not_found(client, db_session, tm
     assert resp.status_code == 404
 
 
+def test_get_event_cover_hidden_event_returns_not_found(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from photostore.config import settings
+    from photostore.models import Event, EventStatus, Photo
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="hidden-cover",
+        name="Hidden Cover",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        status=EventStatus.ARCHIVED,
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    event.cover_path = f"covers/{event.slug}/cover.jpg"
+    event.cover_updated_at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    db_session.flush()
+
+    cover = storage / "covers" / event.slug / "cover.jpg"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(b"FAKEJPEG")
+
+    resp = client.get(f"/api/events/{event.slug}/cover")
+    assert resp.status_code == 404
+
+
 def test_get_public_proof_locked_event_returns_not_found(client, db_session, tmp_path, monkeypatch):
     from datetime import datetime, timezone
 
@@ -433,6 +497,42 @@ def test_get_public_proof_locked_event_returns_not_found(client, db_session, tmp
 
     resp = client.get(f"/proofs/{event.id}/locked-public-proof-001.jpg")
     assert resp.status_code == 404
+
+
+def test_get_event_cover_locked_event_is_public(client, db_session, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.event_access import hash_event_password
+    from photostore.config import settings
+    from photostore.models import Event
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+
+    event = Event(
+        slug="locked-cover",
+        name="Locked Cover",
+        date=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+        is_password_protected=True,
+        access_password_hash=hash_event_password("secret123"),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    event.cover_path = f"covers/{event.slug}/cover.jpg"
+    event.cover_updated_at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    db_session.flush()
+
+    cover_file = storage / "covers" / event.slug / "cover.jpg"
+    cover_file.parent.mkdir(parents=True, exist_ok=True)
+    cover_file.write_bytes(b"FAKEJPEG")
+
+    cover = client.get(f"/api/events/{event.slug}/cover")
+    assert cover.status_code == 200
+    assert cover.headers["X-Accel-Redirect"].endswith(f"/{event.slug}/cover.jpg")
+
+    photos = client.get(f"/api/events/{event.slug}/photos")
+    assert photos.status_code == 401
 
 
 def test_get_public_proof_missing_file_returns_not_found(client, db_session, tmp_path, monkeypatch):

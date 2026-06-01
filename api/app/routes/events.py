@@ -35,6 +35,16 @@ def _is_event_publicly_visible(event: Event, now: datetime | None = None) -> boo
 
 
 def _event_out(event: Event, app_settings) -> EventOut:
+    cover_url = None
+    if event.cover_path:
+        version = ""
+        if event.cover_updated_at:
+            updated_at = event.cover_updated_at
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            version = f"?v={int(updated_at.timestamp())}"
+        cover_url = f"/api/events/{event.slug}/cover{version}"
+
     return EventOut(
         id=event.id,
         slug=event.slug,
@@ -49,6 +59,7 @@ def _event_out(event: Event, app_settings) -> EventOut:
         photo_price_pence=event.photo_price_pence,
         effective_photo_price_pence=effective_photo_price_pence(event, app_settings),
         currency=app_settings.currency,
+        cover_url=cover_url,
     )
 
 
@@ -91,6 +102,31 @@ def _photo_proof_response(photo: Photo, cache_control: str) -> Response:
             "X-Accel-Redirect": accel_path,
             "Content-Type": "image/jpeg",
             "Cache-Control": cache_control,
+        },
+    )
+
+
+def _event_cover_response(event: Event) -> Response:
+    if not event.cover_path:
+        raise HTTPException(404, "Cover image not found")
+
+    cover_abs = (Path(settings.STORAGE_ROOT) / event.cover_path).resolve()
+    covers_root = (Path(settings.STORAGE_ROOT) / "covers").resolve()
+
+    try:
+        cover_rel = cover_abs.relative_to(covers_root)
+    except ValueError:
+        raise HTTPException(500, "Invalid cover image path")
+
+    if not cover_abs.exists():
+        raise HTTPException(404, "Cover image not found")
+
+    return Response(
+        status_code=200,
+        headers={
+            "X-Accel-Redirect": f"/_internal_covers/{cover_rel.as_posix()}",
+            "Content-Type": "image/jpeg",
+            "Cache-Control": PUBLIC_PROOF_CACHE_CONTROL,
         },
     )
 
@@ -219,6 +255,18 @@ def unlock_event(
 
     token, expires_at = create_event_access_token(event.id)
     return EventUnlockOut(access_token=token, expires_at=expires_at)
+
+
+@router.get("/events/{event_ref}/cover")
+def get_event_cover(
+    event_ref: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    event = _resolve_visible_event_ref(event_ref, db)
+    if not event:
+        raise HTTPException(404, "Cover image not found")
+
+    return _event_cover_response(event)
 
 
 @router.get("/events/{event_ref}/photos/{photo_id}/proof")

@@ -76,7 +76,7 @@ export default function CartDrawer({ open, onClose }: CartDrawerProps) {
             items.map((item) => (
               <div
                 key={item.photoId}
-                className="flex items-center gap-3 bg-surface-800 rounded-lg p-2"
+                className="flex min-w-0 items-center gap-3 rounded-lg bg-surface-800 p-2"
               >
                 <img
                   src={item.proofUrl}

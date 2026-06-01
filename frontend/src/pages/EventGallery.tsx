@@ -344,7 +344,7 @@ export default function EventGallery() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:min-w-[23rem]">
+            <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:w-full lg:max-w-sm">
               <div className="rounded border border-surface-700 bg-surface-950 p-3">
                 <p className="text-2xl font-semibold text-content">{data?.total ?? event?.photo_count ?? '-'}</p>
                 <p className="mt-1 text-xs text-content-muted">Photos</p>
@@ -432,7 +432,7 @@ export default function EventGallery() {
               <SlidersHorizontal size={17} />
               Find photos
             </div>
-            <form onSubmit={handleFilterSubmit} className="grid gap-3 lg:grid-cols-[minmax(12rem,1fr)_11rem_11rem_auto_auto] lg:items-end">
+            <form onSubmit={handleFilterSubmit} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,11rem)_minmax(0,11rem)_auto_auto] lg:items-end">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
                   Bib number
