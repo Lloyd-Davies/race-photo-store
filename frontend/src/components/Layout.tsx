@@ -47,7 +47,7 @@ export default function Layout() {
       </header>
 
       {/* Page content */}
-      <main className={clsx('flex-1', items.length > 0 && 'pb-24 md:pb-0')}>
+      <main className={clsx('flex-1', items.length > 0 && 'pb-28 md:pb-0')}>
         <Outlet />
       </main>
 

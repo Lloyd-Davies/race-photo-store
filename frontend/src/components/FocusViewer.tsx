@@ -1,7 +1,8 @@
-import { useEffect, useRef, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, ChevronLeft, ChevronRight, Loader2, Plus, ShoppingBag, X } from 'lucide-react'
 import type { Photo } from '../api/events'
+import { getVisualViewportSnapshot } from '../hooks/useVisualViewport'
 import { useCartStore } from '../store/cart'
 import { clsx } from '../utils/clsx'
 import { formatMoney } from '../utils/money'
@@ -53,6 +54,8 @@ export default function FocusViewer({
   const dialogRef = useRef<HTMLDivElement>(null)
   const activeThumbRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
+  const initialViewportWidthRef = useRef(getVisualViewportSnapshot().width)
+  const [viewerHeight, setViewerHeight] = useState(() => getVisualViewportSnapshot().height)
   const selectedItems = useCartStore((s) => s.items)
   const selectedEventId = useCartStore((s) => s.eventId)
   const isSelected = useCartStore((s) => s.has(activePhotoId))
@@ -65,12 +68,53 @@ export default function FocusViewer({
   const selectedTotal = selectedCount * photoPricePence
 
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow
+    const scrollY = window.scrollY
+    const previousHtmlOverflow = document.documentElement.style.overflow
+    const previousBodyOverflow = document.body.style.overflow
+    const previousBodyPosition = document.body.style.position
+    const previousBodyTop = document.body.style.top
+    const previousBodyLeft = document.body.style.left
+    const previousBodyRight = document.body.style.right
+    const previousBodyWidth = document.body.style.width
+
+    document.documentElement.style.overflow = 'hidden'
     document.body.style.overflow = 'hidden'
+    document.body.style.position = 'fixed'
+    document.body.style.top = `-${scrollY}px`
+    document.body.style.left = '0'
+    document.body.style.right = '0'
+    document.body.style.width = '100%'
     requestAnimationFrame(() => dialogRef.current?.focus())
 
     return () => {
-      document.body.style.overflow = previousOverflow
+      document.documentElement.style.overflow = previousHtmlOverflow
+      document.body.style.overflow = previousBodyOverflow
+      document.body.style.position = previousBodyPosition
+      document.body.style.top = previousBodyTop
+      document.body.style.left = previousBodyLeft
+      document.body.style.right = previousBodyRight
+      document.body.style.width = previousBodyWidth
+      window.scrollTo(0, scrollY)
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleViewportChange() {
+      const viewport = getVisualViewportSnapshot()
+      const widthChanged = Math.abs(viewport.width - initialViewportWidthRef.current) > 2
+      if (!widthChanged) return
+      initialViewportWidthRef.current = viewport.width
+      setViewerHeight(viewport.height)
+    }
+
+    window.addEventListener('orientationchange', handleViewportChange)
+    window.addEventListener('resize', handleViewportChange)
+    window.visualViewport?.addEventListener('resize', handleViewportChange)
+
+    return () => {
+      window.removeEventListener('orientationchange', handleViewportChange)
+      window.removeEventListener('resize', handleViewportChange)
+      window.visualViewport?.removeEventListener('resize', handleViewportChange)
     }
   }, [])
 
@@ -151,7 +195,8 @@ export default function FocusViewer({
       aria-modal="true"
       aria-labelledby="focus-viewer-title"
       tabIndex={-1}
-      className="fixed inset-0 z-50 flex flex-col bg-black text-white focus:outline-none"
+      className="fixed left-0 top-0 z-50 flex w-full flex-col overflow-hidden overscroll-contain bg-black text-white focus:outline-none"
+      style={{ height: `${viewerHeight}px` }}
     >
       <h2 id="focus-viewer-title" className="sr-only">
         Photo {activeItem.position} of {total}
@@ -169,7 +214,7 @@ export default function FocusViewer({
         </button>
 
         <div
-          className="relative flex min-h-0 items-center justify-center overflow-hidden bg-white/[0.04] touch-pan-y sm:rounded"
+          className="relative flex min-h-0 items-center justify-center overflow-hidden overscroll-contain bg-white/[0.04] touch-pan-y sm:rounded"
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
         >
@@ -246,10 +291,7 @@ export default function FocusViewer({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <p className="truncate font-mono text-sm text-white">{activeItem.photo.photo_id}</p>
-              <p className="mt-1 text-sm text-white/60">
-                {items.length} loaded in Focus
-                {loadError ? <span className="text-red-300"> - {loadError}</span> : null}
-              </p>
+              {loadError ? <p className="mt-1 text-sm text-red-300">{loadError}</p> : null}
             </div>
 
             <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:flex lg:items-center">

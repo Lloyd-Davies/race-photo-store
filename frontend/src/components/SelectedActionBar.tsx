@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { ShoppingBag, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchEvents } from '../api/events'
+import { useVisualViewport } from '../hooks/useVisualViewport'
 import { useCartStore } from '../store/cart'
 import { formatMoney } from '../utils/money'
 
@@ -9,14 +10,22 @@ export default function SelectedActionBar() {
   const items = useCartStore((s) => s.items)
   const eventId = useCartStore((s) => s.eventId)
   const clear = useCartStore((s) => s.clear)
+  const viewport = useVisualViewport()
   const { data: events } = useQuery({ queryKey: ['events'], queryFn: fetchEvents })
   const event = events?.find((e) => e.id === eventId)
   const subtotal = event ? items.length * event.effective_photo_price_pence : null
+  const rawBottomOffset = typeof window === 'undefined'
+    ? 0
+    : window.innerHeight - (viewport.offsetTop + viewport.height)
+  const bottomOffset = Math.max(1, Math.ceil(rawBottomOffset))
 
   if (items.length === 0) return null
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-700 bg-surface-950/95 px-4 py-3 shadow-2xl backdrop-blur md:hidden nav-safe-bottom">
+    <div
+      className="fixed inset-x-0 z-40 border-t border-surface-700 bg-surface-950/95 px-4 py-3 shadow-2xl backdrop-blur md:hidden nav-safe-bottom"
+      style={{ bottom: bottomOffset }}
+    >
       <div className="mx-auto flex max-w-lg items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-surface-800 text-content">

@@ -43,10 +43,21 @@ interface MetadataPillProps {
 
 function MetadataPill({ icon, label }: MetadataPillProps) {
   return (
-    <span className="inline-flex min-h-9 max-w-full items-center gap-2 rounded border border-surface-700 bg-surface-900 px-3 py-1.5 text-sm text-content-muted">
+    <span className="inline-flex min-h-8 max-w-full items-center gap-2 rounded border border-surface-700 bg-surface-900 px-2.5 py-1 text-xs text-content-muted sm:min-h-9 sm:px-3 sm:py-1.5 sm:text-sm">
       <span className="shrink-0 text-content-muted">{icon}</span>
       <span className="truncate">{label}</span>
     </span>
+  )
+}
+
+function GalleryStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="min-w-0 rounded border border-surface-700 bg-surface-950 px-3 py-2 sm:p-3">
+      <p className="truncate text-base font-semibold text-content sm:text-2xl">{value}</p>
+      <p className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-content-muted sm:mt-1 sm:text-xs sm:normal-case sm:tracking-normal">
+        {label}
+      </p>
+    </div>
   )
 }
 
@@ -107,6 +118,7 @@ export default function EventGallery() {
   const [viewerLoadingDirection, setViewerLoadingDirection] = useState<FocusViewerDirection | null>(null)
   const [viewerLoadError, setViewerLoadError] = useState<string | null>(null)
   const viewerOriginRef = useRef<HTMLElement | null>(null)
+  const galleryBrowseRef = useRef<HTMLElement | null>(null)
   const [eventAccessToken, setEventAccessToken] = useState<string | null>(null)
   const [unlockSecret, setUnlockSecret] = useState('')
   const [unlockError, setUnlockError] = useState<string | null>(null)
@@ -185,6 +197,7 @@ export default function EventGallery() {
     setStartTime(startTimeInput || undefined)
     setEndTime(endTimeInput || undefined)
     setPage(1)
+    scrollToGalleryBrowse()
   }
 
   function clearFilters() {
@@ -195,6 +208,23 @@ export default function EventGallery() {
     setStartTimeInput('')
     setEndTimeInput('')
     setPage(1)
+    scrollToGalleryBrowse()
+  }
+
+  function scrollToGalleryBrowse() {
+    window.requestAnimationFrame(() => {
+      const target = galleryBrowseRef.current
+      if (!target) return
+      const stickyOffset = 72
+      const top = target.getBoundingClientRect().top + window.scrollY - stickyOffset
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+    })
+  }
+
+  function handlePageChange(nextPage: number) {
+    if (nextPage === page) return
+    setPage(nextPage)
+    scrollToGalleryBrowse()
   }
 
   const activeViewerIndex = viewerItems.findIndex((item) => item.photo.photo_id === activePhotoId)
@@ -290,7 +320,7 @@ export default function EventGallery() {
   }
 
   return (
-    <PublicPageShell className="space-y-8">
+    <PublicPageShell className="space-y-5 sm:space-y-8">
       <nav className="flex min-w-0 items-center gap-3 text-sm" aria-label="Breadcrumb">
         <Link
           to="/"
@@ -319,16 +349,16 @@ export default function EventGallery() {
       )}
 
       {!eventError && (
-        <section className="space-y-5 rounded-lg border border-surface-700 bg-surface-900 p-5 sm:p-6">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <section className="space-y-4 rounded-lg border border-surface-700 bg-surface-900 p-4 sm:space-y-5 sm:p-6">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
             <div className="min-w-0">
-              <p className="text-sm font-medium uppercase tracking-[0.16em] text-content-muted">
+              <p className="text-xs font-medium uppercase tracking-[0.14em] text-content-muted sm:text-sm sm:tracking-[0.16em]">
                 Event gallery
               </p>
-              <h1 className="mt-3 text-3xl font-semibold leading-tight text-content sm:text-4xl">
+              <h1 className="mt-2 text-2xl font-semibold leading-tight text-content sm:mt-3 sm:text-4xl">
                 {event?.name ?? 'Loading gallery'}
               </h1>
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-3 flex min-w-0 flex-wrap gap-2 sm:mt-4">
                 <MetadataPill icon={<CalendarDays size={15} />} label={formatEventDate(event?.date)} />
                 {event?.location && (
                   <MetadataPill icon={<MapPin size={15} />} label={event.location} />
@@ -344,21 +374,10 @@ export default function EventGallery() {
               </div>
             </div>
 
-            <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:w-full lg:max-w-sm">
-              <div className="rounded border border-surface-700 bg-surface-950 p-3">
-                <p className="text-2xl font-semibold text-content">{data?.total ?? event?.photo_count ?? '-'}</p>
-                <p className="mt-1 text-xs text-content-muted">Photos</p>
-              </div>
-              <div className="rounded border border-surface-700 bg-surface-950 p-3">
-                <p className="text-2xl font-semibold text-content">{selectedCount}</p>
-                <p className="mt-1 text-xs text-content-muted">Selected</p>
-              </div>
-              <div className="col-span-2 rounded border border-surface-700 bg-surface-950 p-3 sm:col-span-1">
-                <p className="truncate text-2xl font-semibold text-content">
-                  {event ? formatMoney(selectedTotal, event.currency) : '-'}
-                </p>
-                <p className="mt-1 text-xs text-content-muted">Total</p>
-              </div>
+            <div className="grid min-w-0 grid-cols-3 gap-2 lg:w-full lg:max-w-sm lg:gap-3">
+              <GalleryStat label="Photos" value={data?.total ?? event?.photo_count ?? '-'} />
+              <GalleryStat label="Selected" value={selectedCount} />
+              <GalleryStat label="Total" value={event ? formatMoney(selectedTotal, event.currency) : '-'} />
             </div>
           </div>
 
@@ -426,71 +445,75 @@ export default function EventGallery() {
       )}
 
       {!eventError && (!isEventLocked || !!eventAccessToken) && (
-        <section className="space-y-5">
+        <section ref={galleryBrowseRef} className="scroll-mt-20 space-y-5">
           <div className="rounded-lg border border-surface-700 bg-surface-900 p-4">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-content">
               <SlidersHorizontal size={17} />
               Find photos
             </div>
             <form onSubmit={handleFilterSubmit} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,11rem)_minmax(0,11rem)_auto_auto] lg:items-end">
-              <label className="block">
+              <label className="block min-w-0">
                 <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
                   Bib number
                 </span>
-                <div className="relative">
+                <div className="relative min-w-0">
                   <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-content-muted" />
                   <input
                     type="text"
                     value={bibInput}
                     onChange={(e) => setBibInput(e.target.value)}
                     placeholder="Search bib"
-                    className="min-h-11 w-full rounded border border-surface-600 bg-surface-800 px-9 py-2 text-sm text-content placeholder:text-content-muted focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    className="min-h-11 w-full min-w-0 rounded border border-surface-600 bg-surface-800 px-9 py-2 text-sm text-content placeholder:text-content-muted focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
               </label>
 
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
-                  Start time
-                </span>
-                <div className="relative">
-                  <Clock3 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-content-muted" />
-                  <input
-                    type="time"
-                    value={startTimeInput}
-                    onChange={(e) => setStartTimeInput(e.target.value)}
-                    className="min-h-11 w-full rounded border border-surface-600 bg-surface-800 px-9 py-2 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
-                </div>
-              </label>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 lg:contents">
+                <label className="block min-w-0">
+                  <span className="mb-1.5 block truncate text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
+                    Start time
+                  </span>
+                  <div className="relative min-w-0">
+                    <Clock3 size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted" />
+                    <input
+                      type="time"
+                      value={startTimeInput}
+                      onChange={(e) => setStartTimeInput(e.target.value)}
+                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-1.5 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
+                    />
+                  </div>
+                </label>
 
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
-                  End time
-                </span>
-                <div className="relative">
-                  <Clock3 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-content-muted" />
-                  <input
-                    type="time"
-                    value={endTimeInput}
-                    onChange={(e) => setEndTimeInput(e.target.value)}
-                    className="min-h-11 w-full rounded border border-surface-600 bg-surface-800 px-9 py-2 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
-                </div>
-              </label>
+                <label className="block min-w-0">
+                  <span className="mb-1.5 block truncate text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
+                    End time
+                  </span>
+                  <div className="relative min-w-0">
+                    <Clock3 size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted" />
+                    <input
+                      type="time"
+                      value={endTimeInput}
+                      onChange={(e) => setEndTimeInput(e.target.value)}
+                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-1.5 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
+                    />
+                  </div>
+                </label>
+              </div>
 
-              <Button type="submit" className="min-h-11 w-full lg:w-auto">
-                Apply
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="min-h-11 w-full lg:w-auto"
-                onClick={clearFilters}
-                disabled={!hasActiveFilters && !bibInput && !startTimeInput && !endTimeInput}
-              >
-                Clear
-              </Button>
+              <div className="grid min-w-0 grid-cols-2 gap-3 lg:contents">
+                <Button type="submit" className="min-h-11 w-full lg:w-auto">
+                  Apply
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-11 w-full lg:w-auto"
+                  onClick={clearFilters}
+                  disabled={!hasActiveFilters && !bibInput && !startTimeInput && !endTimeInput}
+                >
+                  Clear
+                </Button>
+              </div>
             </form>
 
             {hasActiveFilters && (
@@ -505,6 +528,7 @@ export default function EventGallery() {
                       setBib(undefined)
                       setBibInput('')
                       setPage(1)
+                      scrollToGalleryBrowse()
                     }}
                   />
                 )}
@@ -515,6 +539,7 @@ export default function EventGallery() {
                       setStartTime(undefined)
                       setStartTimeInput('')
                       setPage(1)
+                      scrollToGalleryBrowse()
                     }}
                   />
                 )}
@@ -525,6 +550,7 @@ export default function EventGallery() {
                       setEndTime(undefined)
                       setEndTimeInput('')
                       setPage(1)
+                      scrollToGalleryBrowse()
                     }}
                   />
                 )}
@@ -586,7 +612,7 @@ export default function EventGallery() {
                     <Button
                       variant="secondary"
                       disabled={page === 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      onClick={() => handlePageChange(Math.max(1, page - 1))}
                       className="min-h-10"
                     >
                       <ChevronLeft size={16} />
@@ -595,7 +621,7 @@ export default function EventGallery() {
                     <Button
                       variant="secondary"
                       disabled={page === data.pages}
-                      onClick={() => setPage((p) => Math.min(data.pages, p + 1))}
+                      onClick={() => handlePageChange(Math.min(data.pages, page + 1))}
                       className="min-h-10"
                     >
                       Next
