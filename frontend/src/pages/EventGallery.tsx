@@ -82,6 +82,12 @@ function FilterPill({ label, onClear }: FilterPillProps) {
   )
 }
 
+function formatTimeInput(value: string) {
+  const digits = value.replace(/\D/g, '').slice(0, 4)
+  if (digits.length <= 2) return digits
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`
+}
+
 function toViewerItems(photos: Photo[], page: number): FocusViewerItem[] {
   return photos.map((photo, indexOnPage) => ({
     photo,
@@ -474,12 +480,17 @@ export default function EventGallery() {
                     Start time
                   </span>
                   <div className="relative min-w-0">
-                    <Clock3 size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted sm:size-4" />
+                    <Clock3 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-content-muted" />
                     <input
-                      type="time"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]"
+                      maxLength={5}
                       value={startTimeInput}
-                      onChange={(e) => setStartTimeInput(e.target.value)}
-                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-2 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
+                      onChange={(e) => setStartTimeInput(formatTimeInput(e.target.value))}
+                      placeholder="HH:MM"
+                      title="Use 24-hour time, for example 09:30"
+                      className="min-h-11 w-full min-w-0 rounded border border-surface-600 bg-surface-800 px-9 py-2 text-sm text-content placeholder:text-content-muted focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
                 </label>
@@ -489,12 +500,17 @@ export default function EventGallery() {
                     End time
                   </span>
                   <div className="relative min-w-0">
-                    <Clock3 size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted sm:size-4" />
+                    <Clock3 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-content-muted" />
                     <input
-                      type="time"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]"
+                      maxLength={5}
                       value={endTimeInput}
-                      onChange={(e) => setEndTimeInput(e.target.value)}
-                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-2 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
+                      onChange={(e) => setEndTimeInput(formatTimeInput(e.target.value))}
+                      placeholder="HH:MM"
+                      title="Use 24-hour time, for example 10:45"
+                      className="min-h-11 w-full min-w-0 rounded border border-surface-600 bg-surface-800 px-9 py-2 text-sm text-content placeholder:text-content-muted focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
                 </label>
