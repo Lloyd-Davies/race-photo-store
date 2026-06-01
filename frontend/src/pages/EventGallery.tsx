@@ -468,18 +468,18 @@ export default function EventGallery() {
                 </div>
               </label>
 
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 lg:contents">
+              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:contents">
                 <label className="block min-w-0">
                   <span className="mb-1.5 block truncate text-xs font-medium uppercase tracking-[0.12em] text-content-muted">
                     Start time
                   </span>
                   <div className="relative min-w-0">
-                    <Clock3 size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted" />
+                    <Clock3 size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted sm:size-4" />
                     <input
                       type="time"
                       value={startTimeInput}
                       onChange={(e) => setStartTimeInput(e.target.value)}
-                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-1.5 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
+                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-2 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
                     />
                   </div>
                 </label>
@@ -489,12 +489,12 @@ export default function EventGallery() {
                     End time
                   </span>
                   <div className="relative min-w-0">
-                    <Clock3 size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted" />
+                    <Clock3 size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-content-muted sm:size-4" />
                     <input
                       type="time"
                       value={endTimeInput}
                       onChange={(e) => setEndTimeInput(e.target.value)}
-                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-1.5 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
+                      className="time-input min-h-11 w-full min-w-0 max-w-full rounded border border-surface-600 bg-surface-800 py-2 pl-8 pr-2 text-sm text-content focus:outline-none focus:ring-2 focus:ring-sky-500 sm:px-9"
                     />
                   </div>
                 </label>

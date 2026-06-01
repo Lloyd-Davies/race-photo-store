@@ -5,11 +5,13 @@ export interface VisualViewportSnapshot {
   height: number
   offsetTop: number
   offsetLeft: number
+  pageTop: number
+  pageLeft: number
 }
 
 function readViewport(): VisualViewportSnapshot {
   if (typeof window === 'undefined') {
-    return { width: 0, height: 0, offsetTop: 0, offsetLeft: 0 }
+    return { width: 0, height: 0, offsetTop: 0, offsetLeft: 0, pageTop: 0, pageLeft: 0 }
   }
 
   const visualViewport = window.visualViewport
@@ -18,6 +20,8 @@ function readViewport(): VisualViewportSnapshot {
     height: visualViewport?.height ?? window.innerHeight,
     offsetTop: visualViewport?.offsetTop ?? 0,
     offsetLeft: visualViewport?.offsetLeft ?? 0,
+    pageTop: visualViewport?.pageTop ?? window.scrollY,
+    pageLeft: visualViewport?.pageLeft ?? window.scrollX,
   }
 }
 

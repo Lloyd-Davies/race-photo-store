@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { Check, ChevronLeft, ChevronRight, Loader2, Plus, ShoppingBag, X } from 'lucide-react'
 import type { Photo } from '../api/events'
@@ -54,8 +55,14 @@ export default function FocusViewer({
   const dialogRef = useRef<HTMLDivElement>(null)
   const activeThumbRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
-  const initialViewportWidthRef = useRef(getVisualViewportSnapshot().width)
-  const [viewerHeight, setViewerHeight] = useState(() => getVisualViewportSnapshot().height)
+  const initialViewportRef = useRef(getVisualViewportSnapshot())
+  const initialViewportWidthRef = useRef(initialViewportRef.current.width)
+  const [viewerFrame, setViewerFrame] = useState(() => ({
+    top: initialViewportRef.current.offsetTop,
+    left: initialViewportRef.current.offsetLeft,
+    width: initialViewportRef.current.width,
+    height: initialViewportRef.current.height,
+  }))
   const selectedItems = useCartStore((s) => s.items)
   const selectedEventId = useCartStore((s) => s.eventId)
   const isSelected = useCartStore((s) => s.has(activePhotoId))
@@ -68,33 +75,49 @@ export default function FocusViewer({
   const selectedTotal = selectedCount * photoPricePence
 
   useEffect(() => {
+    const scrollX = window.scrollX
     const scrollY = window.scrollY
     const previousHtmlOverflow = document.documentElement.style.overflow
+    const previousHtmlOverscrollBehavior = document.documentElement.style.overscrollBehavior
+    const previousHtmlTouchAction = document.documentElement.style.touchAction
     const previousBodyOverflow = document.body.style.overflow
-    const previousBodyPosition = document.body.style.position
-    const previousBodyTop = document.body.style.top
-    const previousBodyLeft = document.body.style.left
-    const previousBodyRight = document.body.style.right
-    const previousBodyWidth = document.body.style.width
+    const previousBodyOverscrollBehavior = document.body.style.overscrollBehavior
+    const previousBodyTouchAction = document.body.style.touchAction
 
     document.documentElement.style.overflow = 'hidden'
+    document.documentElement.style.overscrollBehavior = 'none'
+    document.documentElement.style.touchAction = 'none'
     document.body.style.overflow = 'hidden'
-    document.body.style.position = 'fixed'
-    document.body.style.top = `-${scrollY}px`
-    document.body.style.left = '0'
-    document.body.style.right = '0'
-    document.body.style.width = '100%'
+    document.body.style.overscrollBehavior = 'none'
+    document.body.style.touchAction = 'none'
+
+    function keepScrollPosition() {
+      if (window.scrollX === scrollX && window.scrollY === scrollY) return
+      window.scrollTo(scrollX, scrollY)
+    }
+
+    function preventScrollChain(e: Event) {
+      const target = e.target
+      if (target instanceof Element && target.closest('[data-focus-filmstrip="true"]')) return
+      e.preventDefault()
+    }
+
+    window.addEventListener('scroll', keepScrollPosition)
+    document.addEventListener('wheel', preventScrollChain, { passive: false })
+    document.addEventListener('touchmove', preventScrollChain, { passive: false })
     requestAnimationFrame(() => dialogRef.current?.focus())
 
     return () => {
+      window.removeEventListener('scroll', keepScrollPosition)
+      document.removeEventListener('wheel', preventScrollChain)
+      document.removeEventListener('touchmove', preventScrollChain)
       document.documentElement.style.overflow = previousHtmlOverflow
+      document.documentElement.style.overscrollBehavior = previousHtmlOverscrollBehavior
+      document.documentElement.style.touchAction = previousHtmlTouchAction
       document.body.style.overflow = previousBodyOverflow
-      document.body.style.position = previousBodyPosition
-      document.body.style.top = previousBodyTop
-      document.body.style.left = previousBodyLeft
-      document.body.style.right = previousBodyRight
-      document.body.style.width = previousBodyWidth
-      window.scrollTo(0, scrollY)
+      document.body.style.overscrollBehavior = previousBodyOverscrollBehavior
+      document.body.style.touchAction = previousBodyTouchAction
+      window.scrollTo(scrollX, scrollY)
     }
   }, [])
 
@@ -102,19 +125,26 @@ export default function FocusViewer({
     function handleViewportChange() {
       const viewport = getVisualViewportSnapshot()
       const widthChanged = Math.abs(viewport.width - initialViewportWidthRef.current) > 2
-      if (!widthChanged) return
-      initialViewportWidthRef.current = viewport.width
-      setViewerHeight(viewport.height)
+      setViewerFrame((currentFrame) => ({
+        top: viewport.offsetTop,
+        left: viewport.offsetLeft,
+        width: viewport.width,
+        height: widthChanged ? viewport.height : currentFrame.height,
+      }))
+      if (widthChanged) initialViewportWidthRef.current = viewport.width
     }
 
+    handleViewportChange()
     window.addEventListener('orientationchange', handleViewportChange)
     window.addEventListener('resize', handleViewportChange)
     window.visualViewport?.addEventListener('resize', handleViewportChange)
+    window.visualViewport?.addEventListener('scroll', handleViewportChange)
 
     return () => {
       window.removeEventListener('orientationchange', handleViewportChange)
       window.removeEventListener('resize', handleViewportChange)
       window.visualViewport?.removeEventListener('resize', handleViewportChange)
+      window.visualViewport?.removeEventListener('scroll', handleViewportChange)
     }
   }, [])
 
@@ -188,15 +218,20 @@ export default function FocusViewer({
     if (deltaX > 0 && hasPrevious) onPrevious()
   }
 
-  return (
+  const dialog = (
     <div
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="focus-viewer-title"
       tabIndex={-1}
-      className="fixed left-0 top-0 z-50 flex w-full flex-col overflow-hidden overscroll-contain bg-black text-white focus:outline-none"
-      style={{ height: `${viewerHeight}px` }}
+      className="fixed z-50 flex flex-col overflow-hidden overscroll-contain bg-black text-white focus:outline-none"
+      style={{
+        top: viewerFrame.top,
+        left: viewerFrame.left,
+        width: viewerFrame.width,
+        height: viewerFrame.height,
+      }}
     >
       <h2 id="focus-viewer-title" className="sr-only">
         Photo {activeItem.position} of {total}
@@ -214,7 +249,7 @@ export default function FocusViewer({
         </button>
 
         <div
-          className="relative flex min-h-0 items-center justify-center overflow-hidden overscroll-contain bg-white/[0.04] touch-pan-y sm:rounded"
+          className="relative flex min-h-0 touch-none items-center justify-center overflow-hidden overscroll-contain bg-white/[0.04] sm:rounded"
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
         >
@@ -329,7 +364,11 @@ export default function FocusViewer({
             </div>
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Loaded photo filmstrip">
+          <div
+            className="flex touch-pan-x gap-2 overflow-x-auto pb-1"
+            aria-label="Loaded photo filmstrip"
+            data-focus-filmstrip="true"
+          >
             {items.map((item) => {
               const active = item.photo.photo_id === activePhotoId
               return (
@@ -363,4 +402,6 @@ export default function FocusViewer({
       </footer>
     </div>
   )
+
+  return createPortal(dialog, document.body)
 }
