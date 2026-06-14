@@ -37,6 +37,7 @@ services:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/photos
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
@@ -49,6 +50,13 @@ services:
       ZIP_TTL_DAYS: ${ZIP_TTL_DAYS:-3}
       ZIP_CLEANUP_ENABLED: ${ZIP_CLEANUP_ENABLED:-true}
       CACHE_ROOT: ${CACHE_ROOT:-/data/photos/cache}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-photostore}
+      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:-}
+      R2_REGION: ${R2_REGION:-auto}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       MAX_PHOTO_UPLOAD_BYTES: ${MAX_PHOTO_UPLOAD_BYTES:-26214400}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       SITE_TAGLINE: ${SITE_TAGLINE:-Your race, your photos.}
@@ -77,6 +85,7 @@ services:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/photos
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
@@ -84,6 +93,13 @@ services:
       ZIP_TTL_DAYS: ${ZIP_TTL_DAYS:-3}
       ZIP_CLEANUP_ENABLED: ${ZIP_CLEANUP_ENABLED:-true}
       CACHE_ROOT: ${CACHE_ROOT:-/data/photos/cache}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-photostore}
+      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:-}
+      R2_REGION: ${R2_REGION:-auto}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
@@ -109,6 +125,7 @@ services:
       DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/photos
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
@@ -116,6 +133,13 @@ services:
       ZIP_TTL_DAYS: ${ZIP_TTL_DAYS:-3}
       ZIP_CLEANUP_ENABLED: ${ZIP_CLEANUP_ENABLED:-true}
       CACHE_ROOT: ${CACHE_ROOT:-/data/photos/cache}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-photostore}
+      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:-}
+      R2_REGION: ${R2_REGION:-auto}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       BREVO_API_KEY: ${BREVO_API_KEY:-}

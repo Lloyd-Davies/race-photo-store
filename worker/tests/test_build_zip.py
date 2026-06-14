@@ -1,6 +1,7 @@
 """Tests for ZIP lifecycle Celery tasks."""
 
 import importlib
+import io
 import os
 import sys
 import zipfile
@@ -144,6 +145,50 @@ def test_build_zip_sets_readable_permissions(db_session, tmp_path, monkeypatch):
     assert mode & 0o004
 
 
+def test_build_zip_uploads_zip_to_configured_backend(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from photostore.config import settings
+
+    class FakeZipStorage:
+        def __init__(self):
+            self.uploads = []
+
+        def upload_file(self, source, key, content_type=None):
+            self.uploads.append(
+                {
+                    "key": key,
+                    "content_type": content_type,
+                    "content": Path(source).read_bytes(),
+                }
+            )
+
+    bz_module = _get_bz_module()
+    storage = tmp_path / "photos"
+    order, delivery = _seed(db_session, storage)
+    zip_storage = FakeZipStorage()
+
+    _configure_paths(monkeypatch, settings, storage)
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(bz_module, "get_storage_backend", lambda: zip_storage)
+
+    _get_build_zip_task().apply(args=[order.id])
+
+    assert len(zip_storage.uploads) == 1
+    upload = zip_storage.uploads[0]
+    assert upload["key"] == f"zips/order-{order.id}.zip"
+    assert upload["content_type"] == "application/zip"
+    assert not (storage / "zips" / f"order-{order.id}.zip").exists()
+    with zipfile.ZipFile(io.BytesIO(upload["content"])) as zf:
+        assert zf.namelist() == ["zip-photo-1.jpg", "zip-photo-2.jpg", "zip-photo-3.jpg"]
+
+    db_session.refresh(delivery)
+    assert delivery.zip_status == DeliveryZipStatus.READY
+    assert delivery.zip_path == f"zips/order-{order.id}.zip"
+
+
 def test_build_zip_regenerates_existing_zip(db_session, tmp_path, monkeypatch):
     from photostore.config import settings
 
@@ -236,6 +281,45 @@ def test_cleanup_expired_zips_deletes_artifact_and_preserves_order(
 
     assert result == 1
     assert not zip_path.exists()
+    db_session.refresh(order)
+    db_session.refresh(delivery)
+    assert order.status == OrderStatus.READY
+    assert delivery.zip_status == DeliveryZipStatus.EXPIRED
+    assert delivery.zip_deleted_at is not None
+
+
+def test_cleanup_expired_zips_deletes_via_storage_backend(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from photostore.config import settings
+
+    class FakeZipStorage:
+        def __init__(self):
+            self.deleted = []
+
+        def delete(self, key):
+            self.deleted.append(key)
+
+    cleanup_module = _get_cleanup_module()
+    storage = tmp_path / "photos"
+    order, delivery = _seed(db_session, storage)
+    delivery.zip_path = f"zips/order-{order.id}.zip"
+    delivery.zip_status = DeliveryZipStatus.READY
+    delivery.zip_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db_session.flush()
+    zip_storage = FakeZipStorage()
+
+    _configure_paths(monkeypatch, settings, storage)
+    monkeypatch.setattr(settings, "ZIP_CLEANUP_ENABLED", True)
+    monkeypatch.setattr(cleanup_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(cleanup_module, "get_storage_backend", lambda: zip_storage)
+
+    result = _get_cleanup_task().apply().get()
+
+    assert result == 1
+    assert zip_storage.deleted == [f"zips/order-{order.id}.zip"]
     db_session.refresh(order)
     db_session.refresh(delivery)
     assert order.status == OrderStatus.READY

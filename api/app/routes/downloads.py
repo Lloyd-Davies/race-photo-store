@@ -2,14 +2,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
 from app.rate_limit import enforce_rate_limit
 from photostore.config import settings
 from photostore.models import Delivery, DeliveryZipStatus, OrderItem, Photo
-from photostore.storage import get_storage_backend
+from photostore.storage import InvalidStorageKey, get_storage_backend
 
 router = APIRouter(tags=["downloads"])
 
@@ -97,9 +97,10 @@ def download(token: str, request: Request, db: Session = Depends(get_db)) -> Res
         db.commit()
         return _zip_not_ready(409, "ZIP has expired. Regenerate it from the order page.")
 
+    storage = get_storage_backend()
     try:
-        zip_exists = get_storage_backend().exists(delivery.zip_path)
-    except ValueError:
+        zip_exists = storage.exists(delivery.zip_path)
+    except InvalidStorageKey:
         zip_exists = False
     if not zip_exists:
         delivery.zip_status = DeliveryZipStatus.EXPIRED
@@ -117,13 +118,20 @@ def download(token: str, request: Request, db: Session = Depends(get_db)) -> Res
 
     filename = f"event-{delivery.event_slug}-order-{delivery.order_id}.zip"
 
-    return Response(
-        status_code=200,
-        headers={
-            "X-Accel-Redirect": f"/_internal_zips/{zip_filename}",
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Type": "application/zip",
-        },
+    if storage.is_local:
+        return Response(
+            status_code=200,
+            headers={
+                "X-Accel-Redirect": f"/_internal_zips/{zip_filename}",
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": "application/zip",
+            },
+        )
+
+    return RedirectResponse(
+        storage.presigned_get_url(delivery.zip_path),
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
     )
 
 

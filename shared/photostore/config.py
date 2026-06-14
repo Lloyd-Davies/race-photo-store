@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     REDIS_URL: str
     STORAGE_ROOT: str = "/data/photos"
+    STORAGE_BACKEND: str = "local"
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     PUBLIC_BASE_URL: str = ""
@@ -20,6 +21,13 @@ class Settings(BaseSettings):
     ZIP_TTL_DAYS: int = 3
     ZIP_CLEANUP_ENABLED: bool = True
     CACHE_ROOT: str = "/data/photos/cache"
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET: str = "photostore"
+    R2_ENDPOINT_URL: str = ""
+    R2_REGION: str = "auto"
+    R2_PUBLIC_BASE_URL: str = ""
     MAX_PHOTO_UPLOAD_BYTES: int = 100 * 1024 * 1024
     CELERY_CONCURRENCY: int = 2
     UVICORN_WORKERS: int = 2

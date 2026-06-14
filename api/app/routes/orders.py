@@ -15,7 +15,7 @@ from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.delivery import ensure_delivery_for_order
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
-from photostore.storage import get_storage_backend
+from photostore.storage import InvalidStorageKey, get_storage_backend
 
 router = APIRouter(prefix="/api", tags=["orders"])
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def _zip_file_exists(delivery: Delivery) -> bool:
         return False
     try:
         return get_storage_backend().exists(delivery.zip_path)
-    except ValueError:
+    except InvalidStorageKey:
         return False
 
 

@@ -6,7 +6,7 @@ from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus, Photo
-from photostore.storage import get_storage_backend
+from photostore.storage import LocalStorageBackend, get_storage_backend
 
 ZIP_ERROR_MAX_LENGTH = 1000
 
@@ -57,7 +57,8 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         tmp_zip.unlink(missing_ok=True)
         cache_zip.unlink(missing_ok=True)
 
-        storage = get_storage_backend()
+        source_storage = LocalStorageBackend()
+        zip_storage = get_storage_backend()
         zip_key = f"zips/order-{order_id}.zip"
 
         try:
@@ -67,7 +68,7 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
                     if not photo:
                         raise ValueError(f"Photo record missing for id={photo_id}")
 
-                    original = storage.local_path(photo.original_path)
+                    original = source_storage.local_path(photo.original_path)
                     if not original.exists():
                         raise FileNotFoundError(
                             f"Original not found: {original}. "
@@ -77,7 +78,7 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
                     zf.write(original, arcname=f"{photo_id}.jpg")
 
             tmp_zip.replace(cache_zip)
-            storage.upload_file(cache_zip, zip_key, content_type="application/zip")
+            zip_storage.upload_file(cache_zip, zip_key, content_type="application/zip")
         finally:
             tmp_zip.unlink(missing_ok=True)
             cache_zip.unlink(missing_ok=True)

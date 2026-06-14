@@ -99,6 +99,43 @@ def test_download_content_disposition(client, db_session, tmp_path, monkeypatch)
     assert "test-event" in resp.headers["content-disposition"]
 
 
+def test_download_redirects_to_presigned_url_for_r2_backend(
+    client,
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from app.routes import downloads as downloads_module
+
+    class FakeR2Storage:
+        is_local = False
+
+        def __init__(self):
+            self.presigned_key = None
+
+        def exists(self, key):
+            return True
+
+        def presigned_get_url(self, key, expires_seconds=3600):
+            self.presigned_key = key
+            return f"https://r2.example.test/{key}?signature=test"
+
+    storage = FakeR2Storage()
+    monkeypatch.setattr(downloads_module, "get_storage_backend", lambda: storage)
+    delivery = _setup_delivery(db_session, tmp_path)
+
+    resp = client.get(f"/d/{delivery.token}", follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == (
+        f"https://r2.example.test/zips/order-{delivery.order_id}.zip?signature=test"
+    )
+    assert "x-accel-redirect" not in resp.headers
+    assert storage.presigned_key == f"zips/order-{delivery.order_id}.zip"
+    db_session.refresh(delivery)
+    assert delivery.download_count == 1
+
+
 def test_download_expired_token(client, db_session, tmp_path, monkeypatch):
     from photostore.config import settings
     monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
