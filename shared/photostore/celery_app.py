@@ -17,3 +17,11 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,   # one task at a time per worker process
     task_acks_late=True,            # ack only after the task completes
 )
+
+if settings.ZIP_CLEANUP_ENABLED:
+    celery_app.conf.beat_schedule = {
+        "cleanup-expired-zips-hourly": {
+            "task": "tasks.cleanup_expired_zips.cleanup_expired_zips",
+            "schedule": 3600.0,
+        },
+    }

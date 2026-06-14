@@ -407,7 +407,7 @@ def test_upload_bib_tags_trims_and_deduplicates_equivalent_values(admin_client, 
 def _create_ready_order_with_delivery(db_session, test_photos):
     from datetime import timedelta
     import uuid
-    from photostore.models import Delivery, Order, OrderItem, OrderStatus
+    from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
 
     order = Order(
         stripe_session_id="cs_test_admin_orders",
@@ -432,6 +432,9 @@ def _create_ready_order_with_delivery(db_session, test_photos):
         expires_at=datetime.now(timezone.utc) + timedelta(days=5),
         max_downloads=5,
         download_count=3,
+        zip_status=DeliveryZipStatus.READY,
+        zip_created_at=datetime.now(timezone.utc),
+        zip_expires_at=datetime.now(timezone.utc) + timedelta(days=3),
     ))
     db_session.flush()
     return order
@@ -502,25 +505,24 @@ def test_admin_rebuild_zip_enqueues_and_clears_delivery(
     test_photos,
     mock_celery_send_task,
 ):
-    from photostore.config import settings
-    from photostore.models import Delivery, Order
+    from photostore.models import Delivery, DeliveryZipStatus, Order
 
     order = _create_ready_order_with_delivery(db_session, test_photos)
     delivery = db_session.query(Delivery).filter(Delivery.order_id == order.id).first()
-
-    zip_abs = Path(settings.STORAGE_ROOT) / delivery.zip_path
-    zip_abs.parent.mkdir(parents=True, exist_ok=True)
-    zip_abs.write_bytes(b"PK")
+    old_token = delivery.token
 
     resp = admin_client.post(f"/api/admin/orders/{order.id}/rebuild-zip")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "PAID"
+    assert resp.json()["status"] == "READY"
+    assert resp.json()["zip_status"] == "BUILDING"
 
     remaining = db_session.query(Delivery).filter(Delivery.order_id == order.id).first()
     db_order = db_session.query(Order).filter(Order.id == order.id).first()
-    assert remaining is None
-    assert db_order.status.value == "PAID"
-    assert not zip_abs.exists()
+    assert remaining is not None
+    assert remaining.token == old_token
+    assert remaining.zip_status == DeliveryZipStatus.BUILDING
+    assert remaining.zip_error is None
+    assert db_order.status.value == "READY"
 
     mock_celery_send_task.assert_called_with("tasks.build_zip.build_zip", args=[order.id])
 

@@ -33,7 +33,7 @@ def test_webhook_stripe_not_configured(client):
 
 def test_webhook_fulfills_order(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
     from photostore.config import settings
-    from photostore.models import OrderStatus
+    from photostore.models import Delivery, DeliveryZipStatus, OrderStatus
 
     monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake")
 
@@ -59,13 +59,13 @@ def test_webhook_fulfills_order(client, db_session, test_photos, mock_celery_sen
     assert resp.json() == {"received": True}
 
     db_session.refresh(order)
-    assert order.status == OrderStatus.PAID
+    assert order.status == OrderStatus.READY
     assert order.stripe_payment_intent_id == "pi_testfake"
 
-    # build_zip must have been enqueued
-    mock_celery_send_task.assert_called_once_with(
-        "tasks.build_zip.build_zip", args=[order.id]
-    )
+    delivery = db_session.query(Delivery).filter(Delivery.order_id == order.id).one()
+    assert delivery.zip_path is None
+    assert delivery.zip_status == DeliveryZipStatus.NOT_REQUESTED
+    mock_celery_send_task.assert_not_called()
 
 
 def test_webhook_invalid_signature(client, monkeypatch):
@@ -98,7 +98,7 @@ def test_webhook_invalid_payload_is_generic(client, monkeypatch):
 
 
 def test_webhook_idempotent(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
-    """Delivering the webhook twice must not re-enqueue build_zip."""
+    """Delivering the webhook twice must not enqueue ZIP work."""
     from photostore.config import settings
     from photostore.models import OrderStatus
 
@@ -119,13 +119,13 @@ def test_webhook_idempotent(client, db_session, test_photos, mock_celery_send_ta
         client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
         client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
 
-    assert mock_celery_send_task.call_count == 1
+    assert mock_celery_send_task.call_count == 0
 
 
-def test_webhook_queues_order_confirmed_email(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
-    """After payment, an ORDER_CONFIRMED send_email task must be enqueued exactly once."""
+def test_webhook_queues_download_ready_email(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
+    """After payment, a DOWNLOAD_READY send_email task must be enqueued exactly once."""
     from photostore.config import settings
-    from photostore.models import Communication, CommunicationKind, OrderStatus
+    from photostore.models import Communication, CommunicationKind
 
     monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake")
     monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
@@ -154,7 +154,7 @@ def test_webhook_queues_order_confirmed_email(client, db_session, test_photos, m
     comm = (
         db_session.query(Communication)
         .filter(Communication.order_id == order.id)
-        .filter(Communication.kind == CommunicationKind.ORDER_CONFIRMED)
+        .filter(Communication.kind == CommunicationKind.DOWNLOAD_READY)
         .first()
     )
     assert comm is not None, "Communication row was not created"
@@ -169,7 +169,7 @@ def test_webhook_queues_order_confirmed_email(client, db_session, test_photos, m
 
 
 def test_webhook_duplicate_does_not_queue_second_email(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
-    """Second identical webhook must not enqueue a second ORDER_CONFIRMED email."""
+    """Second identical webhook must not enqueue a second DOWNLOAD_READY email."""
     from photostore.config import settings
     from photostore.models import Communication
 

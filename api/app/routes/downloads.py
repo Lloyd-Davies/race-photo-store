@@ -2,13 +2,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
 from app.rate_limit import enforce_rate_limit
 from photostore.config import settings
-from photostore.models import Delivery, OrderItem, Photo
+from photostore.models import Delivery, DeliveryZipStatus, OrderItem, Photo
+from photostore.storage import get_storage_backend
 
 router = APIRouter(tags=["downloads"])
 
@@ -22,10 +23,18 @@ def _get_valid_delivery(token: str, db: Session) -> Delivery:
     if datetime.now(timezone.utc) > delivery.expires_at:
         raise HTTPException(410, "Download link has expired")
 
-    if delivery.download_count >= delivery.max_downloads:
-        raise HTTPException(410, "Download limit reached")
-
     return delivery
+
+
+def _zip_expired(delivery: Delivery) -> bool:
+    return bool(
+        delivery.zip_expires_at
+        and datetime.now(timezone.utc) > delivery.zip_expires_at
+    )
+
+
+def _zip_not_ready(status_code: int, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"detail": message})
 
 
 def _safe_storage_relative_path(path: str, storage_subdir: str) -> tuple[Path, Path]:
@@ -67,9 +76,36 @@ def download(token: str, request: Request, db: Session = Depends(get_db)) -> Res
 
     delivery = _get_valid_delivery(token, db)
 
-    zip_abs_path = Path(settings.STORAGE_ROOT) / delivery.zip_path
-    if not zip_abs_path.exists():
-        raise HTTPException(409, "ZIP is not ready yet")
+    if delivery.download_count >= delivery.max_downloads:
+        raise HTTPException(410, "Download limit reached")
+
+    status = delivery.zip_status or DeliveryZipStatus.NOT_REQUESTED
+    if status == DeliveryZipStatus.NOT_REQUESTED:
+        return _zip_not_ready(409, "ZIP has not been prepared")
+    if status == DeliveryZipStatus.BUILDING:
+        return _zip_not_ready(202, "ZIP is being prepared")
+    if status == DeliveryZipStatus.FAILED:
+        return _zip_not_ready(409, "ZIP generation failed. Regenerate it from the order page.")
+    if status == DeliveryZipStatus.EXPIRED:
+        return _zip_not_ready(409, "ZIP has expired. Regenerate it from the order page.")
+    if not delivery.zip_path:
+        return _zip_not_ready(409, "ZIP has not been prepared")
+
+    if _zip_expired(delivery):
+        delivery.zip_status = DeliveryZipStatus.EXPIRED
+        delivery.zip_deleted_at = datetime.now(timezone.utc)
+        db.commit()
+        return _zip_not_ready(409, "ZIP has expired. Regenerate it from the order page.")
+
+    try:
+        zip_exists = get_storage_backend().exists(delivery.zip_path)
+    except ValueError:
+        zip_exists = False
+    if not zip_exists:
+        delivery.zip_status = DeliveryZipStatus.EXPIRED
+        delivery.zip_deleted_at = datetime.now(timezone.utc)
+        db.commit()
+        return _zip_not_ready(409, "ZIP has expired. Regenerate it from the order page.")
 
     # Increment before responding so partial connections still consume a count
     delivery.download_count += 1
@@ -87,6 +123,41 @@ def download(token: str, request: Request, db: Session = Depends(get_db)) -> Res
             "X-Accel-Redirect": f"/_internal_zips/{zip_filename}",
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Content-Type": "application/zip",
+        },
+    )
+
+
+@router.get("/d/{token}/photos/{photo_id}/view")
+def view_photo(
+    token: str,
+    photo_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    enforce_rate_limit(
+        request,
+        scope="photo-view",
+        limit=240,
+        window_seconds=60,
+        suffix=token,
+    )
+
+    delivery = _get_valid_delivery(token, db)
+    photo = _purchased_photo(delivery, photo_id, db)
+    original_abs, original_rel = _safe_storage_relative_path(photo.original_path, "originals")
+
+    if not original_abs.exists():
+        raise HTTPException(404, "Original image not found")
+
+    return Response(
+        status_code=200,
+        headers={
+            "X-Accel-Redirect": f"/_internal_originals/{original_rel.as_posix()}",
+            "Content-Disposition": (
+                f'inline; filename="{_attachment_filename(delivery.event_slug, photo_id)}"'
+            ),
+            "Content-Type": "image/jpeg",
+            "Cache-Control": "private, max-age=3600",
         },
     )
 

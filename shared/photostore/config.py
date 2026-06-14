@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     EVENT_ACCESS_TTL_HOURS: int = 12
     ORDER_ACCESS_TTL_HOURS: int = 720
     DOWNLOAD_MAX_DOWNLOADS: int = 100
+    ZIP_TTL_DAYS: int = 3
+    ZIP_CLEANUP_ENABLED: bool = True
+    CACHE_ROOT: str = "/data/photos/cache"
     MAX_PHOTO_UPLOAD_BYTES: int = 100 * 1024 * 1024
     CELERY_CONCURRENCY: int = 2
     UVICORN_WORKERS: int = 2

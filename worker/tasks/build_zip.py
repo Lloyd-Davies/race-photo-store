@@ -1,7 +1,3 @@
-import os
-import shutil
-import tempfile
-import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,12 +5,19 @@ from pathlib import Path
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
-from photostore.models import (
-    Communication, CommunicationKind, CommunicationStatus,
-    Delivery, Order, OrderItem, OrderStatus, Photo,
-)
+from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus, Photo
+from photostore.storage import get_storage_backend
 
-DOWNLOAD_TTL_DAYS = 30
+ZIP_ERROR_MAX_LENGTH = 1000
+
+
+def _record_zip_failure(db, order_id: int, exc: Exception) -> None:
+    delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
+    if not delivery:
+        return
+    delivery.zip_status = DeliveryZipStatus.FAILED
+    delivery.zip_error = str(exc)[:ZIP_ERROR_MAX_LENGTH]
+    db.commit()
 
 
 @celery_app.task(name="tasks.build_zip.build_zip", bind=True, max_retries=3)
@@ -25,35 +28,46 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         if not order:
             raise ValueError(f"Order {order_id} not found")
 
-        # Mark as building so the API can reflect progress
-        order.status = OrderStatus.BUILDING
+        delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
+        if not delivery:
+            raise ValueError(f"Delivery for order {order_id} not found")
+
+        delivery.zip_status = DeliveryZipStatus.BUILDING
+        delivery.zip_error = None
+        delivery.zip_deleted_at = None
         db.commit()
 
-        # Collect photo IDs from order items
-        items = db.query(OrderItem).filter(OrderItem.order_id == order_id).all()
+        items = (
+            db.query(OrderItem)
+            .filter(OrderItem.order_id == order_id)
+            .order_by(OrderItem.id.asc())
+            .all()
+        )
         photo_ids = [item.photo_id for item in items]
+        if not photo_ids:
+            raise ValueError(f"Order {order_id} has no items")
 
         photos = db.query(Photo).filter(Photo.id.in_(photo_ids)).all()
         photo_map = {p.id: p for p in photos}
 
-        storage_root = Path(settings.STORAGE_ROOT)
-        zip_dir = storage_root / "zips"
-        zip_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = Path(settings.CACHE_ROOT) / "orders" / str(order_id)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp_zip = cache_dir / f"order-{order_id}.zip.tmp"
+        cache_zip = cache_dir / f"order-{order_id}.zip"
+        tmp_zip.unlink(missing_ok=True)
+        cache_zip.unlink(missing_ok=True)
 
-        final_zip = zip_dir / f"order-{order_id}.zip"
-
-        # Write to a temp file first; atomic rename prevents partial ZIPs being served
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".zip", dir=zip_dir)
-        os.close(tmp_fd)
+        storage = get_storage_backend()
+        zip_key = f"zips/order-{order_id}.zip"
 
         try:
-            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_STORED) as zf:
+            with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
                 for photo_id in photo_ids:
                     photo = photo_map.get(photo_id)
                     if not photo:
                         raise ValueError(f"Photo record missing for id={photo_id}")
 
-                    original = storage_root / photo.original_path
+                    original = storage.local_path(photo.original_path)
                     if not original.exists():
                         raise FileNotFoundError(
                             f"Original not found: {original}. "
@@ -62,55 +76,26 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
 
                     zf.write(original, arcname=f"{photo_id}.jpg")
 
-            shutil.move(tmp_path, final_zip)
-            os.chmod(final_zip, 0o644)
+            tmp_zip.replace(cache_zip)
+            storage.upload_file(cache_zip, zip_key, content_type="application/zip")
+        finally:
+            tmp_zip.unlink(missing_ok=True)
+            cache_zip.unlink(missing_ok=True)
 
-        except Exception:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            raise
-
-        # Determine event slug for the download filename
-        event_slug = photos[0].event.slug if photos else "event"
-
-        # Create a tokenised delivery record
-        delivery = Delivery(
-            order_id=order_id,
-            token=str(uuid.uuid4()),
-            zip_path=f"zips/order-{order_id}.zip",
-            event_slug=event_slug,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=DOWNLOAD_TTL_DAYS),
-            max_downloads=settings.DOWNLOAD_MAX_DOWNLOADS,
-            download_count=0,
-        )
-        db.add(delivery)
-
-        order.status = OrderStatus.READY
+        now = datetime.now(timezone.utc)
+        delivery.zip_path = zip_key
+        delivery.zip_status = DeliveryZipStatus.READY
+        delivery.zip_created_at = now
+        delivery.zip_expires_at = now + timedelta(days=settings.ZIP_TTL_DAYS)
+        delivery.zip_deleted_at = None
+        delivery.zip_error = None
+        if order.status != OrderStatus.EXPIRED:
+            order.status = OrderStatus.READY
         db.commit()
 
-        if settings.EMAIL_ENABLED and order.email:
-            comm = Communication(
-                order_id=order_id,
-                kind=CommunicationKind.DOWNLOAD_READY,
-                status=CommunicationStatus.QUEUED,
-                provider="brevo",
-                recipient_email=order.email,
-                subject="Your photos are ready to download",
-                template_key="DOWNLOAD_READY",
-                initiated_by="system",
-                dedupe_key=f"download_ready:{order_id}",
-            )
-            db.add(comm)
-            db.commit()
-            celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
-
     except Exception as exc:
-        # Mark order FAILED before retrying so the status is visible
         try:
-            failed_order = db.query(Order).filter(Order.id == order_id).first()
-            if failed_order:
-                failed_order.status = OrderStatus.FAILED
-                db.commit()
+            _record_zip_failure(db, order_id, exc)
         except Exception:
             pass
 

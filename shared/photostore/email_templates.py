@@ -23,7 +23,7 @@ _ORDER_CONFIRMED_HTML = """\
   <h1>Order Confirmed</h1>
   <p>Hi {{ customer_email }},</p>
   <p>Thanks for your order! We've received your payment for <strong>{{ event_name }}</strong>.</p>
-  <p>Your photos are being prepared. We'll email you again as soon as your download is ready.</p>
+  <p>Your order page contains your purchased photo links.</p>
   <p><strong>Order reference:</strong> #{{ order_id }}</p>
   <p>
     <a href="{{ order_status_url }}">View your order status</a>
@@ -43,7 +43,7 @@ Hi {{ customer_email }},
 
 Thanks for your order! We have received your payment for {{ event_name }}.
 
-Your photos are being prepared. We will email you again as soon as your download is ready.
+Your order page contains your purchased photo links.
 
 Order reference: #{{ order_id }}
 Order status: {{ order_status_url }}
@@ -70,10 +70,9 @@ _DOWNLOAD_READY_HTML = """\
       Open Your Order
     </a>
   </p>
-  <p>The order page includes the ZIP file and individual photo download links for mobile browsers.</p>
-  <p>Or <a href="{{ direct_download_url }}">download the ZIP directly</a>.</p>
+  <p>The order page includes individual photo links and an option to prepare a ZIP if you need one.</p>
   <p style="font-size:13px;color:#666">
-    This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
+    Your order access expires {{ download_expires_at }}.
   </p>
   <hr>
   <p style="font-size:12px;color:#666">
@@ -94,9 +93,7 @@ Order reference: #{{ order_id }}
 
 Open your order: {{ order_status_url }}
 
-Download the ZIP directly: {{ direct_download_url }}
-
-This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
+Your order access expires {{ download_expires_at }}.
 
 Questions? {{ support_email }}
 """
@@ -120,10 +117,9 @@ _DELIVERY_RESET_HTML = """\
       Open Your Order
     </a>
   </p>
-  <p>The order page includes the ZIP file and individual photo download links for mobile browsers.</p>
-  <p>Or <a href="{{ direct_download_url }}">download the ZIP directly</a>.</p>
+  <p>The order page includes individual photo links and an option to prepare a ZIP if you need one.</p>
   <p style="font-size:13px;color:#666">
-    This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
+    Your order access expires {{ download_expires_at }}.
   </p>
   <hr>
   <p style="font-size:12px;color:#666">
@@ -144,9 +140,7 @@ Order reference: #{{ order_id }}
 
 Open your order: {{ order_status_url }}
 
-Download the ZIP directly: {{ direct_download_url }}
-
-This link expires {{ download_expires_at }} and can be used up to {{ max_downloads }} time(s).
+Your order access expires {{ download_expires_at }}.
 
 Questions? {{ support_email }}
 """

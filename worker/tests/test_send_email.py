@@ -147,7 +147,7 @@ def test_send_email_order_status_link_includes_valid_access_token(db_session, mo
     assert verify_order_access_token(token, order.id)
 
 
-def test_send_email_download_ready_uses_public_download_route(db_session, monkeypatch):
+def test_send_email_download_ready_links_to_order_page_not_direct_zip(db_session, monkeypatch):
     se_module = _get_se_module()
     order, comm = _seed_order_and_communication(
         db_session,
@@ -164,8 +164,11 @@ def test_send_email_download_ready_uses_public_download_route(db_session, monkey
     _get_send_email_task().apply(args=[comm.id])
 
     db_session.refresh(comm)
-    assert "http://testserver/d/download-token-123" in comm.body_html
-    assert "http://testserver/d/download-token-123" in comm.body_text
+    assert f"http://testserver/orders/{order.id}?access_token=" in comm.body_html
+    assert f"Open your order: http://testserver/orders/{order.id}?access_token=" in comm.body_text
+    assert "http://testserver/d/download-token-123" not in comm.body_html
+    assert "http://testserver/d/download-token-123" not in comm.body_text
+    assert "prepare a ZIP" in comm.body_html
     assert "/download/download-token-123" not in comm.body_html
 
 

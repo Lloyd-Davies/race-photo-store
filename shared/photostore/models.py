@@ -54,6 +54,14 @@ class OrderStatus(str, enum.Enum):
     EXPIRED = "EXPIRED"
 
 
+class DeliveryZipStatus(str, enum.Enum):
+    NOT_REQUESTED = "NOT_REQUESTED"
+    BUILDING = "BUILDING"
+    READY = "READY"
+    EXPIRED = "EXPIRED"
+    FAILED = "FAILED"
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -157,11 +165,20 @@ class Delivery(Base):
     id = Column(Integer, primary_key=True)
     order_id = Column(Integer, ForeignKey("orders.id"), unique=True, nullable=False)
     token = Column(String, unique=True, nullable=False, index=True)
-    zip_path = Column(String, nullable=False)          # e.g. zips/order-123.zip
+    zip_path = Column(String)                         # e.g. zips/order-123.zip
     event_slug = Column(String, nullable=False)        # for Content-Disposition filename
     expires_at = Column(DateTime(timezone=True), nullable=False)
     max_downloads = Column(Integer, nullable=False, default=5)
     download_count = Column(Integer, nullable=False, default=0)
+    zip_status = Column(
+        Enum(DeliveryZipStatus),
+        nullable=False,
+        default=DeliveryZipStatus.NOT_REQUESTED,
+    )
+    zip_created_at = Column(DateTime(timezone=True))
+    zip_expires_at = Column(DateTime(timezone=True))
+    zip_deleted_at = Column(DateTime(timezone=True))
+    zip_error = Column(String)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     order = relationship("Order", back_populates="delivery")

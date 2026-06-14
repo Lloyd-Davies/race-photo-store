@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from app.fulfillment import mark_order_ready
 from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
 from photostore.celery_app import celery_app
@@ -57,9 +58,8 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     order = Order(
         stripe_session_id=f"pending_{_uuid.uuid4()}",
         email=req.email or cart.email or "",
-        status=OrderStatus.PAID if unit_amount_pence == 0 else OrderStatus.PENDING,
+        status=OrderStatus.PENDING,
         currency=app_settings.currency,
-        paid_at=(datetime.now(timezone.utc) if unit_amount_pence == 0 else None),
     )
     db.add(order)
     db.flush()  # assigns order.id without committing
@@ -77,8 +77,10 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
 
     if unit_amount_pence == 0:
         order.stripe_session_id = f"free_{_uuid.uuid4()}"
+        comm_id = mark_order_ready(order, db)
         db.commit()
-        celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+        if comm_id:
+            celery_app.send_task("tasks.send_email.send_email", args=[comm_id])
         return CheckoutOut(
             order_id=order.id,
             stripe_checkout_url=None,

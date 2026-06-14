@@ -46,9 +46,10 @@ async function request<T>(path: string, init?: RequestInit, jsonHeaders = true):
 export const apiGet = <T>(path: string, headers?: HeadersInit) =>
   request<T>(path, { headers })
 
-export const apiPost = <T>(path: string, body?: unknown) =>
+export const apiPost = <T>(path: string, body?: unknown, headers?: HeadersInit) =>
   request<T>(path, {
     method: 'POST',
+    headers,
     body: JSON.stringify(body),
   })
 

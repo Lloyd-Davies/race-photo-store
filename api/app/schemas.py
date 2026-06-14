@@ -5,7 +5,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
-from photostore.models import CommunicationKind, CommunicationStatus, EventStatus, OrderStatus
+from photostore.models import (
+    CommunicationKind,
+    CommunicationStatus,
+    DeliveryZipStatus,
+    EventStatus,
+    OrderStatus,
+)
 
 EVENT_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -107,13 +113,23 @@ class CheckoutOut(BaseModel):
 class OrderDownloadItemOut(BaseModel):
     photo_id: str
     proof_url: Optional[str] = None
+    view_url: Optional[str] = None
     download_url: str
+
+
+class OrderZipOut(BaseModel):
+    status: DeliveryZipStatus = DeliveryZipStatus.NOT_REQUESTED
+    download_url: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    error: Optional[str] = None
 
 
 class OrderOut(BaseModel):
     id: int
     status: OrderStatus
     download_url: Optional[str] = None
+    zip: OrderZipOut = Field(default_factory=OrderZipOut)
+    items: list[OrderDownloadItemOut] = Field(default_factory=list)
     download_items: list[OrderDownloadItemOut] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
@@ -231,6 +247,9 @@ class AdminOrderOut(BaseModel):
     max_downloads: Optional[int] = None
     expires_at: Optional[datetime] = None
     download_url: Optional[str] = None
+    zip_status: Optional[DeliveryZipStatus] = None
+    zip_expires_at: Optional[datetime] = None
+    zip_error: Optional[str] = None
 
 
 class AdminOrderListOut(BaseModel):

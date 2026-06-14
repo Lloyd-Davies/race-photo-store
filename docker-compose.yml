@@ -46,6 +46,9 @@ services:
       ADMIN_REFRESH_TTL_HOURS: ${ADMIN_REFRESH_TTL_HOURS:-12}
       EVENT_ACCESS_TTL_HOURS: ${EVENT_ACCESS_TTL_HOURS:-12}
       ORDER_ACCESS_TTL_HOURS: ${ORDER_ACCESS_TTL_HOURS:-720}
+      ZIP_TTL_DAYS: ${ZIP_TTL_DAYS:-3}
+      ZIP_CLEANUP_ENABLED: ${ZIP_CLEANUP_ENABLED:-true}
+      CACHE_ROOT: ${CACHE_ROOT:-/data/photos/cache}
       MAX_PHOTO_UPLOAD_BYTES: ${MAX_PHOTO_UPLOAD_BYTES:-26214400}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       SITE_TAGLINE: ${SITE_TAGLINE:-Your race, your photos.}
@@ -78,6 +81,9 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       ORDER_ACCESS_TTL_HOURS: ${ORDER_ACCESS_TTL_HOURS:-720}
+      ZIP_TTL_DAYS: ${ZIP_TTL_DAYS:-3}
+      ZIP_CLEANUP_ENABLED: ${ZIP_CLEANUP_ENABLED:-true}
+      CACHE_ROOT: ${CACHE_ROOT:-/data/photos/cache}
       SITE_NAME: ${SITE_NAME:-Race Photos}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
@@ -85,6 +91,37 @@ services:
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Race Photos}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       CELERY_CONCURRENCY: "2"
+    volumes:
+      - /mnt/pstore/photos:/data/photos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [photostore]
+    restart: unless-stopped
+
+  worker-beat:
+    container_name: photostore-worker-beat
+    image: ghcr.io/lloyd-davies/race-photo-store/worker:${IMAGE_TAG:-dev-latest}
+    command: ["sh", "-c", "celery -A tasks beat --loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://photostore:${POSTGRES_PASSWORD}@postgres:5432/photostore
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/photos
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      ORDER_ACCESS_TTL_HOURS: ${ORDER_ACCESS_TTL_HOURS:-720}
+      ZIP_TTL_DAYS: ${ZIP_TTL_DAYS:-3}
+      ZIP_CLEANUP_ENABLED: ${ZIP_CLEANUP_ENABLED:-true}
+      CACHE_ROOT: ${CACHE_ROOT:-/data/photos/cache}
+      SITE_NAME: ${SITE_NAME:-Race Photos}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Race Photos}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
     volumes:
       - /mnt/pstore/photos:/data/photos
     depends_on:

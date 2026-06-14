@@ -6,7 +6,7 @@ def test_checkout_stripe_not_configured(client, test_cart):
 def test_free_checkout_does_not_require_stripe(
     client, db_session, test_cart, test_event, mock_stripe, mock_celery_send_task
 ):
-    from photostore.models import Order, OrderItem, OrderStatus
+    from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
 
     test_event.photo_price_pence = 0
     db_session.flush()
@@ -19,7 +19,7 @@ def test_free_checkout_does_not_require_stripe(
     assert data["order_access_token"]
 
     order = db_session.query(Order).filter(Order.id == data["order_id"]).one()
-    assert order.status == OrderStatus.PAID
+    assert order.status == OrderStatus.READY
     assert order.paid_at is not None
     assert order.stripe_session_id.startswith("free_")
     assert {
@@ -28,7 +28,10 @@ def test_free_checkout_does_not_require_stripe(
         .filter(OrderItem.order_id == order.id)
         .all()
     } == {0}
-    mock_celery_send_task.assert_called_with("tasks.build_zip.build_zip", args=[order.id])
+    delivery = db_session.query(Delivery).filter(Delivery.order_id == order.id).one()
+    assert delivery.zip_path is None
+    assert delivery.zip_status == DeliveryZipStatus.NOT_REQUESTED
+    mock_celery_send_task.assert_not_called()
 
 
 def test_checkout_creates_order(client, test_cart, mock_stripe, monkeypatch):

@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
 import { useParams, Link, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { CheckCircle2, Download, Loader2, XCircle, Clock, ImageIcon } from 'lucide-react'
-import { fetchOrder, type OrderStatus as Status } from '../api/orders'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { CheckCircle2, Download, Eye, Loader2, XCircle, Clock, ImageIcon } from 'lucide-react'
+import { fetchOrder, prepareOrderZip, type OrderStatus as Status } from '../api/orders'
 import { useCartStore } from '../store/cart'
 import Button from '../components/Button'
 import EmbeddedBrowserWarning from '../components/EmbeddedBrowserWarning'
@@ -57,13 +57,23 @@ export default function OrderStatus() {
     localStorage.setItem(storageKey, queryAccessToken)
   }, [storageKey, queryAccessToken])
 
-  const { data: order, error } = useQuery({
+  const orderQuery = useQuery({
     queryKey: ['order', id, orderAccessToken],
     queryFn: () => fetchOrder(id, orderAccessToken),
     enabled: !isNaN(id),
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      return status && POLL_STATUSES.includes(status) ? 3000 : false
+      const zipStatus = query.state.data?.zip?.status
+      return (status && POLL_STATUSES.includes(status)) || zipStatus === 'BUILDING' ? 3000 : false
+    },
+  })
+  const order = orderQuery.data
+  const error = orderQuery.error
+
+  const prepareZipMutation = useMutation({
+    mutationFn: () => prepareOrderZip(id, orderAccessToken),
+    onSuccess: () => {
+      void orderQuery.refetch()
     },
   })
 
@@ -95,7 +105,9 @@ export default function OrderStatus() {
     )
   }
 
-  const { status, download_url, download_items = [] } = order
+  const { status } = order
+  const zip = order.zip
+  const downloadItems = order.items?.length ? order.items : order.download_items ?? []
   const isFinal = status === 'READY' || status === 'FAILED' || status === 'EXPIRED'
   const currentStepIdx = STEP_ORDER.indexOf(status as Status)
   const isInAppBrowser = isEmbeddedInAppBrowser()
@@ -103,15 +115,17 @@ export default function OrderStatus() {
     'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500'
   const zipLinkClass =
     'inline-flex w-full items-center justify-center rounded-md bg-sky-500 px-6 py-2.5 text-base font-medium text-white shadow-sm transition-colors hover:bg-sky-600 active:bg-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500'
+  const zipButtonClass =
+    'inline-flex w-full items-center justify-center rounded-md px-6 py-2.5 text-base font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:pointer-events-none disabled:opacity-50'
 
-  const individualDownloads = status === 'READY' && download_items.length > 0 && (
+  const individualDownloads = status === 'READY' && downloadItems.length > 0 && (
     <section className="mt-6">
       <div className="mb-3 flex items-center gap-2">
         <ImageIcon size={17} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-content">Download individual photos</h2>
+        <h2 className="text-sm font-semibold text-content">Your photos</h2>
       </div>
       <div className="divide-y divide-surface-700 overflow-hidden rounded-lg border border-surface-700">
-        {download_items.map((item) => (
+        {downloadItems.map((item) => (
           <div key={item.photo_id} className="flex items-center gap-3 bg-surface-800/60 p-3">
             {item.proof_url ? (
               <img
@@ -125,14 +139,15 @@ export default function OrderStatus() {
               </div>
             )}
             <span className="min-w-0 flex-1 truncate text-sm text-content">{item.photo_id}</span>
-            {item.proof_url && (
+            {item.view_url && (
               <a
-                href={item.proof_url}
+                href={item.view_url}
                 target="_blank"
                 rel="noreferrer"
                 className={`${actionLinkClass} bg-surface-700 text-content hover:bg-surface-600`}
               >
-                Preview
+                <Eye size={14} className="mr-1.5" />
+                Open
               </a>
             )}
             <a
@@ -149,11 +164,43 @@ export default function OrderStatus() {
     </section>
   )
 
-  const zipDownload = status === 'READY' && download_url && (
-    <a href={download_url} download className={zipLinkClass}>
-      <Download size={18} className="mr-2" />
-      Download ZIP
-    </a>
+  const zipAction = status === 'READY' && zip && (
+    <section className="mt-6">
+      {zip.status === 'READY' && zip.download_url ? (
+        <a href={zip.download_url} download className={zipLinkClass}>
+          <Download size={18} className="mr-2" />
+          Download ZIP
+        </a>
+      ) : zip.status === 'BUILDING' ? (
+        <button className={`${zipButtonClass} bg-surface-700 text-content`} disabled>
+          <Loader2 size={18} className="mr-2 animate-spin" />
+          Preparing ZIP...
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={`${zipButtonClass} bg-surface-700 text-content hover:bg-surface-600`}
+          onClick={() => prepareZipMutation.mutate()}
+          disabled={prepareZipMutation.isPending}
+        >
+          {prepareZipMutation.isPending ? (
+            <Loader2 size={18} className="mr-2 animate-spin" />
+          ) : (
+            <Download size={18} className="mr-2" />
+          )}
+          {zip.status === 'EXPIRED'
+            ? 'Regenerate ZIP'
+            : zip.status === 'FAILED'
+              ? 'Retry ZIP generation'
+              : 'Prepare ZIP'}
+        </button>
+      )}
+      {(zip.error || prepareZipMutation.error) && (
+        <p className="mt-3 rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+          {zip.error || (prepareZipMutation.error as Error).message}
+        </p>
+      )}
+    </section>
   )
 
   return (
@@ -201,21 +248,12 @@ export default function OrderStatus() {
         {/* Failed message */}
         {status === 'FAILED' && (
           <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2 mb-6">
-            Your ZIP could not be built. Please contact support referencing order #{id}.
+            Your order could not be completed. Please contact support referencing order #{id}.
           </p>
         )}
 
-        {isInAppBrowser ? (
-          <>
-            {individualDownloads}
-            {zipDownload && <div className="mt-6">{zipDownload}</div>}
-          </>
-        ) : (
-          <>
-            {zipDownload}
-            {individualDownloads}
-          </>
-        )}
+        {individualDownloads}
+        {zipAction}
 
         {/* Polling indicator */}
         {!isFinal && (

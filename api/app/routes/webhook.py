@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Optional
 
 import stripe
@@ -6,12 +5,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
+from app.fulfillment import mark_order_ready
 from app.rate_limit import enforce_rate_limit
 from photostore.celery_app import celery_app
 from photostore.config import settings
-from photostore.models import (
-    Communication, CommunicationKind, CommunicationStatus, Order, OrderStatus,
-)
+from photostore.models import Order, OrderStatus
 
 router = APIRouter(prefix="/api", tags=["stripe"])
 
@@ -64,27 +62,13 @@ def _handle_checkout_completed(session: dict, db: Session) -> None:
         # Already processed (webhook delivered more than once)
         return
 
-    order.status = OrderStatus.PAID
-    order.stripe_payment_intent_id = session.get("payment_intent")
-    order.email = session.get("customer_email") or order.email
-    order.paid_at = datetime.now(timezone.utc)
+    comm_id = mark_order_ready(
+        order,
+        db,
+        payment_intent_id=session.get("payment_intent"),
+        customer_email=session.get("customer_email"),
+    )
     db.commit()
 
-    # Dispatch the zip-building task to the worker
-    celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
-
-    if settings.EMAIL_ENABLED and order.email:
-        comm = Communication(
-            order_id=order.id,
-            kind=CommunicationKind.ORDER_CONFIRMED,
-            status=CommunicationStatus.QUEUED,
-            provider="brevo",
-            recipient_email=order.email,
-            subject="Your order is confirmed",
-            template_key="ORDER_CONFIRMED",
-            initiated_by="system",
-            dedupe_key=f"order_confirmed:{order.id}",
-        )
-        db.add(comm)
-        db.commit()
-        celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
+    if comm_id:
+        celery_app.send_task("tasks.send_email.send_email", args=[comm_id])

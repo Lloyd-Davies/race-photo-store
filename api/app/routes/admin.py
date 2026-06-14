@@ -45,10 +45,11 @@ from app.schemas import (
 )
 from photostore.celery_app import celery_app
 from photostore.config import settings
+from photostore.delivery import ensure_delivery_for_order
 from photostore.email_provider import EmailMessage, ProviderError, get_provider
 from photostore.models import (
     Cart, Communication, CommunicationKind, CommunicationStatus,
-    Delivery, Event, EventStatus, Order, OrderItem, OrderStatus,
+    Delivery, DeliveryZipStatus, Event, EventStatus, Order, OrderItem, OrderStatus,
     Photo, PhotoState, PhotoTag,
 )
 from photostore.pricing import effective_photo_price_pence, get_app_settings, normalize_currency
@@ -257,7 +258,14 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
         download_count=delivery.download_count if delivery else None,
         max_downloads=delivery.max_downloads if delivery else None,
         expires_at=delivery.expires_at if delivery else None,
-        download_url=(f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}" if delivery else None),
+        download_url=(
+            f"{settings.PUBLIC_BASE_URL}/d/{delivery.token}"
+            if delivery and delivery.zip_status == DeliveryZipStatus.READY
+            else None
+        ),
+        zip_status=delivery.zip_status if delivery else None,
+        zip_expires_at=delivery.zip_expires_at if delivery else None,
+        zip_error=delivery.zip_error if delivery else None,
     )
 
 
@@ -1058,25 +1066,24 @@ def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrde
     if order.status == OrderStatus.PENDING:
         raise HTTPException(409, "Order is not paid yet")
 
-    if order.status == OrderStatus.BUILDING:
+    delivery = ensure_delivery_for_order(order, db)
+    if delivery.zip_status == DeliveryZipStatus.BUILDING:
         raise HTTPException(409, "Order ZIP is already building")
 
-    delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
-    if delivery:
-        zip_abs_path = Path(settings.STORAGE_ROOT) / delivery.zip_path
-        if zip_abs_path.exists():
-            zip_abs_path.unlink()
-        db.delete(delivery)
-        db.flush()
-
-    order.status = OrderStatus.PAID
+    if order.status == OrderStatus.PAID:
+        order.status = OrderStatus.READY
+    delivery.zip_status = DeliveryZipStatus.BUILDING
+    delivery.zip_error = None
+    delivery.zip_deleted_at = None
+    delivery.zip_expires_at = None
     db.commit()
 
     celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
 
     db.refresh(order)
+    db.refresh(delivery)
     item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
-    return _to_admin_order_out(order, item_count, None)
+    return _to_admin_order_out(order, item_count, delivery)
 
 
 @router.get(

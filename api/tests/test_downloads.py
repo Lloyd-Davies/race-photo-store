@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from photostore.models import Delivery, Order, OrderItem, OrderStatus
+from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
 
 
 def _setup_delivery(db_session, tmp_path, max_downloads=5, days_until_expiry=30, download_count=0):
@@ -27,6 +27,9 @@ def _setup_delivery(db_session, tmp_path, max_downloads=5, days_until_expiry=30,
         expires_at=datetime.now(timezone.utc) + timedelta(days=days_until_expiry),
         max_downloads=max_downloads,
         download_count=download_count,
+        zip_status=DeliveryZipStatus.READY,
+        zip_created_at=datetime.now(timezone.utc),
+        zip_expires_at=datetime.now(timezone.utc) + timedelta(days=3),
     )
     db_session.add(delivery)
     db_session.flush()
@@ -133,6 +136,36 @@ def test_download_zip_not_ready_returns_409_and_does_not_increment(
 
     db_session.refresh(delivery)
     assert delivery.download_count == 0
+    assert delivery.zip_status == DeliveryZipStatus.EXPIRED
+
+
+def test_download_zip_not_requested_returns_409(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
+    delivery = _setup_delivery(db_session, tmp_path)
+    delivery.zip_status = DeliveryZipStatus.NOT_REQUESTED
+    delivery.zip_path = None
+    db_session.flush()
+
+    resp = client.get(f"/d/{delivery.token}")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "ZIP has not been prepared"
+
+
+def test_download_zip_building_returns_202(client, db_session, tmp_path, monkeypatch):
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
+    delivery = _setup_delivery(db_session, tmp_path)
+    delivery.zip_status = DeliveryZipStatus.BUILDING
+    db_session.flush()
+
+    resp = client.get(f"/d/{delivery.token}")
+
+    assert resp.status_code == 202
+    assert resp.json()["detail"] == "ZIP is being prepared"
 
 
 def test_photo_download_returns_accel_redirect_and_does_not_increment(
@@ -171,7 +204,7 @@ def test_photo_download_rejects_expired_token(client, db_session, test_photos):
     assert resp.status_code == 410
 
 
-def test_photo_download_rejects_download_limit_reached(
+def test_photo_download_ignores_zip_download_limit(
     client, db_session, test_photos
 ):
     delivery, purchased = _setup_photo_delivery(
@@ -183,7 +216,9 @@ def test_photo_download_rejects_download_limit_reached(
 
     resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}")
 
-    assert resp.status_code == 410
+    assert resp.status_code == 200
+    db_session.refresh(delivery)
+    assert delivery.download_count == 3
 
 
 def test_photo_download_rejects_photo_not_purchased(
@@ -219,3 +254,16 @@ def test_photo_proof_download_returns_accel_redirect(client, db_session, test_ph
         f"/test-event/{purchased[0].id}.jpg"
     )
     assert resp.headers["content-type"] == "image/jpeg"
+
+
+def test_photo_view_returns_inline_original(client, db_session, test_photos):
+    delivery, purchased = _setup_photo_delivery(db_session, test_photos)
+
+    resp = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}/view")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-accel-redirect"].endswith(
+        f"/test-event/{purchased[0].id}.jpg"
+    )
+    assert resp.headers["content-type"] == "image/jpeg"
+    assert "inline" in resp.headers["content-disposition"]
