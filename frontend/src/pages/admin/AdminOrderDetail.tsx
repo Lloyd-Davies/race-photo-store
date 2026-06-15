@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Ban, ClipboardCopy, Link2, Mail, RefreshCw, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Ban, ClipboardCopy, Link2, Mail, RefreshCw, RotateCcw, Clock3, CreditCard } from 'lucide-react'
 import Button from '../../components/Button'
 import {
   expireAdminOrderDelivery,
   fetchAdminOrder,
+  fetchAdminOrderTimeline,
   fetchOrderCommunications,
   rebuildAdminOrderZip,
   resetAdminOrderDelivery,
   sendAdminEmail,
+  syncAdminOrderWithStripe,
   type AdminOrder,
   type CommunicationKind,
 } from '../../api/adminOrders'
@@ -67,6 +69,7 @@ function OrderActions({ order }: Props) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-orders'] })
       queryClient.invalidateQueries({ queryKey: ['admin-order', order.id] })
+      queryClient.invalidateQueries({ queryKey: ['admin-order-timeline', order.id] })
     },
   })
 
@@ -74,6 +77,7 @@ function OrderActions({ order }: Props) {
     mutationFn: () => rebuildAdminOrderZip(order.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-orders'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-order-timeline', order.id] })
       navigate('/admin/orders')
     },
   })
@@ -83,6 +87,16 @@ function OrderActions({ order }: Props) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-orders'] })
       queryClient.invalidateQueries({ queryKey: ['admin-order', order.id] })
+      queryClient.invalidateQueries({ queryKey: ['admin-order-timeline', order.id] })
+    },
+  })
+
+  const syncMut = useMutation({
+    mutationFn: () => syncAdminOrderWithStripe(order.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-orders'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-order', order.id] })
+      queryClient.invalidateQueries({ queryKey: ['admin-order-timeline', order.id] })
     },
   })
 
@@ -134,6 +148,18 @@ function OrderActions({ order }: Props) {
         <Ban size={13} className="mr-1" />
         Expire link
       </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => syncMut.mutate()}
+        loading={syncMut.isPending}
+      >
+        <CreditCard size={13} className="mr-1" />
+        Sync Stripe
+      </Button>
+      {syncMut.data && (
+        <span className="self-center whitespace-nowrap text-xs text-content-muted">{syncMut.data.status}</span>
+      )}
     </div>
   )
 }
@@ -154,9 +180,17 @@ export default function AdminOrderDetail() {
     queryFn: () => fetchOrderCommunications(id),
   })
 
+  const timelineQuery = useQuery({
+    queryKey: ['admin-order-timeline', id],
+    queryFn: () => fetchAdminOrderTimeline(id),
+  })
+
   const sendMut = useMutation({
     mutationFn: () => sendAdminEmail(id, sendKind),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-order-comms', id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-order-comms', id] })
+      queryClient.invalidateQueries({ queryKey: ['admin-order-timeline', id] })
+    },
   })
 
   const order = orderData.data
@@ -204,6 +238,19 @@ export default function AdminOrderDetail() {
             {order.expires_at && (
               <p className="text-content-muted">
                 Link expires: <span className="text-content">{new Date(order.expires_at).toLocaleString()}</span>
+              </p>
+            )}
+            <p className="text-content-muted">
+              ZIP: <span className="text-content">{order.zip_status ?? 'NO ZIP'}</span>
+            </p>
+            {order.zip_expires_at && (
+              <p className="text-content-muted">
+                ZIP expires: <span className="text-content">{new Date(order.zip_expires_at).toLocaleString()}</span>
+              </p>
+            )}
+            {order.zip_error && (
+              <p className="text-red-400 md:col-span-2">
+                ZIP error: <span>{order.zip_error}</span>
               </p>
             )}
           </div>
@@ -287,6 +334,40 @@ export default function AdminOrderDetail() {
                 <p>{new Date(comm.created_at).toLocaleString()}</p>
                 {comm.sent_at && <p>Sent: {new Date(comm.sent_at).toLocaleString()}</p>}
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-6 mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-content">Timeline</h2>
+        <Clock3 size={15} className="text-content-muted" />
+      </div>
+
+      {timelineQuery.isLoading && <p className="text-sm text-content-muted">Loading timeline...</p>}
+      {timelineQuery.error && <p className="text-sm text-red-400">{(timelineQuery.error as Error).message}</p>}
+
+      {timelineQuery.data && timelineQuery.data.entries.length === 0 && (
+        <p className="text-sm text-content-muted">No timeline entries yet.</p>
+      )}
+
+      {timelineQuery.data && timelineQuery.data.entries.length > 0 && (
+        <div className="bg-surface-900 border border-surface-700 rounded-xl divide-y divide-surface-700">
+          {timelineQuery.data.entries.map((entry) => (
+            <div key={`${entry.source}-${entry.id}`} className="px-4 py-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto]">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`text-xs rounded border px-1.5 py-0.5 ${commStatusBadge(entry.status ?? entry.action)}`}>
+                    {entry.source}
+                  </span>
+                  <span className="text-sm font-medium text-content">{entry.action.replace(/_/g, ' ')}</span>
+                  {entry.actor && <span className="text-xs text-content-muted">via {entry.actor}</span>}
+                </div>
+                <p className="mt-1 truncate text-xs text-content-muted">{entry.message}</p>
+              </div>
+              <span className="text-xs text-content-muted md:text-right">
+                {new Date(entry.created_at).toLocaleString()}
+              </span>
             </div>
           ))}
         </div>

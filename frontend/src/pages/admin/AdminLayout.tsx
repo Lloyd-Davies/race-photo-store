@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { CalendarDays, LogOut, ShieldAlert, ReceiptText, Settings } from 'lucide-react'
+import { BarChart3, CalendarDays, LogOut, ShieldAlert, ReceiptText, Settings } from 'lucide-react'
 import Button from '../../components/Button'
-import { fetchAdminStats } from '../../api/adminStats'
 import { adminLogin, refreshAdminSession, verifyAdminSession } from '../../api/adminAuth'
-import { Skeleton } from '../../components/Skeleton'
 
 const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken'
 const ADMIN_REFRESH_TOKEN_KEY = 'adminRefreshToken'
@@ -17,13 +14,6 @@ export default function AdminLayout() {
   const [loadingLogin, setLoadingLogin] = useState(false)
   const [checkingStoredToken, setCheckingStoredToken] = useState(true)
   const navigate = useNavigate()
-
-  const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
-    queryKey: ['admin-stats'],
-    queryFn: fetchAdminStats,
-    enabled: authed,
-    refetchInterval: 30000,
-  })
 
   useEffect(() => {
     const accessToken = sessionStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
@@ -91,17 +81,6 @@ export default function AdminLayout() {
 
     return () => window.clearInterval(id)
   }, [authed])
-
-  useEffect(() => {
-    if (!statsError) return
-    const msg = statsError instanceof Error ? statsError.message : ''
-    if (!msg.startsWith('401:')) return
-
-    sessionStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
-    sessionStorage.removeItem(ADMIN_REFRESH_TOKEN_KEY)
-    setAuthed(false)
-    setError('Your admin session is no longer valid. Please sign in again.')
-  }, [statsError])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -181,6 +160,20 @@ export default function AdminLayout() {
       {/* Sidebar — desktop only */}
       <aside className="hidden md:flex md:flex-col w-48 shrink-0 bg-surface-900 border-r border-surface-700 p-4 space-y-1">
         <NavLink
+          to="/admin/dashboard"
+          className={({ isActive }) =>
+            `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              isActive
+                ? 'bg-sky-500/20 text-sky-500'
+                : 'text-content-muted hover:bg-surface-800 hover:text-content'
+            }`
+          }
+        >
+          <BarChart3 size={16} />
+          Dashboard
+        </NavLink>
+
+        <NavLink
           to="/admin/events"
           end
           className={({ isActive }) =>
@@ -236,46 +229,22 @@ export default function AdminLayout() {
 
       {/* Content */}
       <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-nav-safe md:px-8 md:pt-8 md:pb-8">
-        <div className="mb-6 bg-surface-900 border border-surface-700 rounded-xl p-4">
-          <p className="text-xs uppercase tracking-wide text-content-muted mb-3">Admin snapshot</p>
-          {statsLoading && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {Array.from({ length: 5 }).map((_, idx) => (
-                <Skeleton key={idx} className="h-14 rounded-lg" />
-              ))}
-            </div>
-          )}
-
-          {!statsLoading && stats && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <div className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-content-muted">Events</p>
-                <p className="text-lg font-semibold text-content">{stats.total_events}</p>
-              </div>
-              <div className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-content-muted">Photos</p>
-                <p className="text-lg font-semibold text-content">{stats.total_photos}</p>
-              </div>
-              <div className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-content-muted">Orders</p>
-                <p className="text-lg font-semibold text-content">{stats.total_orders}</p>
-              </div>
-              <div className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-content-muted">Pending</p>
-                <p className="text-lg font-semibold text-content">{stats.pending_orders}</p>
-              </div>
-              <div className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-content-muted">Failed</p>
-                <p className="text-lg font-semibold text-content">{stats.failed_orders}</p>
-              </div>
-            </div>
-          )}
-        </div>
         <Outlet />
       </main>
 
       {/* Mobile bottom nav — visible below md */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden bg-surface-900 border-t border-surface-700 nav-safe-bottom">
+        <NavLink
+          to="/admin/dashboard"
+          className={({ isActive }) =>
+            `flex flex-1 flex-col items-center justify-center gap-0.5 py-3 text-[11px] font-medium transition-colors ${
+              isActive ? 'text-sky-400' : 'text-content-muted'
+            }`
+          }
+        >
+          <BarChart3 size={20} />
+          Metrics
+        </NavLink>
         <NavLink
           to="/admin/events"
           end

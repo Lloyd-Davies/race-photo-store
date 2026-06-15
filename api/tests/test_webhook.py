@@ -122,6 +122,36 @@ def test_webhook_idempotent(client, db_session, test_photos, mock_celery_send_ta
     assert mock_celery_send_task.call_count == 0
 
 
+def test_webhook_persists_stripe_event_once(client, db_session, test_photos, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import StripeEvent
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_fake")
+    order = _make_order(db_session, test_photos)
+    event_payload = {
+        "id": "evt_test_persisted",
+        "type": "checkout.session.completed",
+        "created": 1800000000,
+        "livemode": False,
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "payment_intent": "pi_persisted",
+            "customer_email": "runner@example.com",
+        }},
+    }
+
+    with patch("stripe.Webhook.construct_event", return_value=event_payload):
+        client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
+        client.post("/api/stripe/webhook", content=b"{}", headers={"stripe-signature": "x"})
+
+    events = db_session.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == "evt_test_persisted"
+    ).all()
+    assert len(events) == 1
+    assert events[0].processing_status == "PROCESSED"
+    assert events[0].order_id == order.id
+
+
 def test_webhook_queues_download_ready_email(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
     """After payment, a DOWNLOAD_READY send_email task must be enqueued exactly once."""
     from photostore.config import settings

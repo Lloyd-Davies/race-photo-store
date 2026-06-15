@@ -1,15 +1,20 @@
 from pathlib import Path
+from collections import defaultdict
+import csv
 from datetime import datetime, timedelta, timezone
 import hmac
+from io import StringIO
 import os
 import re
 import tempfile
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
-from sqlalchemy import func
+from sqlalchemy import String, asc, cast, desc, func, or_
+import stripe
 
 from app.admin_session import create_admin_session_tokens, verify_admin_session_token
 from app.deps import get_db, require_admin
@@ -22,6 +27,13 @@ from app.schemas import (
     AdminEmailConfigOut,
     AdminEmailTestRequest,
     AdminEmailTestOut,
+    AdminActivityOut,
+    AdminBreakdownMetric,
+    AdminCustomerMetric,
+    AdminEventMetric,
+    AdminMetricsOut,
+    AdminMetricsTotals,
+    AdminMoneyMetric,
     AdminOrderDetailOut,
     AdminOrderItemOut,
     AdminSettingsOut,
@@ -30,8 +42,13 @@ from app.schemas import (
     AdminRefreshRequest,
     AdminOrderListOut,
     AdminOrderOut,
+    AdminOperationalAlert,
+    AdminOrderTimelineOut,
+    AdminPhotoMetric,
     AdminResetDeliveryRequest,
     AdminSessionOut,
+    AdminStripeSyncOut,
+    AdminTrendPoint,
     BibTagsRequest,
     BibTagsResult,
     CommunicationOut,
@@ -50,13 +67,17 @@ from photostore.email_provider import EmailMessage, ProviderError, get_provider
 from photostore.models import (
     Cart, Communication, CommunicationKind, CommunicationStatus,
     Delivery, DeliveryZipStatus, Event, EventStatus, Order, OrderItem, OrderStatus,
-    Photo, PhotoState, PhotoTag,
+    OrderActivity, Photo, PhotoState, PhotoTag, StripeEvent,
 )
 from photostore.pricing import effective_photo_price_pence, get_app_settings, normalize_currency
+from app.fulfillment import mark_order_ready
+from app.order_activity import record_order_activity
+from app.stripe_event_store import store_stripe_event
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 COVER_MAX_DIMENSION = 1800
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 def _parse_exif_offset(raw_offset: str | None) -> timezone | None:
@@ -269,6 +290,435 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
     )
 
 
+def _line_total_pence(item: OrderItem) -> int:
+    return max(0, item.unit_price_pence - item.discount_applied_pence)
+
+
+def _order_item_stats_subquery(db: Session):
+    return (
+        db.query(
+            OrderItem.order_id,
+            func.count(OrderItem.id).label("item_count"),
+            func.coalesce(
+                func.sum(func.greatest(0, OrderItem.unit_price_pence - OrderItem.discount_applied_pence)),
+                0,
+            ).label("subtotal_pence"),
+        )
+        .group_by(OrderItem.order_id)
+        .subquery()
+    )
+
+
+def _event_order_ids(db: Session, event_id: int):
+    return (
+        db.query(OrderItem.order_id)
+        .join(Photo, Photo.id == OrderItem.photo_id)
+        .filter(Photo.event_id == event_id)
+    )
+
+
+def _admin_order_query(
+    db: Session,
+    *,
+    status: OrderStatus | None = None,
+    zip_status: DeliveryZipStatus | None = None,
+    event_id: int | None = None,
+    q: str | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    paid_from: datetime | None = None,
+    paid_to: datetime | None = None,
+):
+    item_stats = _order_item_stats_subquery(db)
+    query = (
+        db.query(Order, Delivery, item_stats.c.item_count, item_stats.c.subtotal_pence)
+        .outerjoin(Delivery, Delivery.order_id == Order.id)
+        .outerjoin(item_stats, item_stats.c.order_id == Order.id)
+        .options(joinedload(Order.items))
+    )
+
+    if status:
+        query = query.filter(Order.status == status)
+    if zip_status:
+        query = query.filter(Delivery.zip_status == zip_status)
+    if event_id is not None:
+        query = query.filter(Order.id.in_(_event_order_ids(db, event_id)))
+    if created_from:
+        query = query.filter(Order.created_at >= created_from)
+    if created_to:
+        query = query.filter(Order.created_at <= created_to)
+    if paid_from:
+        query = query.filter(Order.paid_at >= paid_from)
+    if paid_to:
+        query = query.filter(Order.paid_at <= paid_to)
+    if q:
+        needle = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                cast(Order.id, String).ilike(needle),
+                Order.email.ilike(needle),
+                Order.stripe_session_id.ilike(needle),
+                Order.stripe_payment_intent_id.ilike(needle),
+                Delivery.event_slug.ilike(needle),
+                Delivery.token.ilike(needle),
+            )
+        )
+    return query, item_stats
+
+
+def _apply_order_sort(query, item_stats, sort: str, direction: str):
+    sort_map = {
+        "id": Order.id,
+        "created_at": Order.created_at,
+        "paid_at": Order.paid_at,
+        "status": Order.status,
+        "subtotal": item_stats.c.subtotal_pence,
+        "items": item_stats.c.item_count,
+    }
+    sort_expr = sort_map.get(sort, Order.id)
+    ordered = desc(sort_expr) if direction != "asc" else asc(sort_expr)
+    return query.order_by(ordered, desc(Order.id))
+
+
+def _money_groups() -> defaultdict[str, dict[str, int]]:
+    return defaultdict(
+        lambda: {
+            "gross_sales_pence": 0,
+            "paid_revenue_pence": 0,
+            "pending_value_pence": 0,
+            "discount_pence": 0,
+            "paid_order_count": 0,
+            "free_order_count": 0,
+        }
+    )
+
+
+def _money_metric_list(groups: dict[str, dict[str, int]]) -> list[AdminMoneyMetric]:
+    result: list[AdminMoneyMetric] = []
+    for currency, values in sorted(groups.items()):
+        paid_count = values.get("paid_order_count", 0)
+        paid_revenue = values.get("paid_revenue_pence", 0)
+        result.append(
+            AdminMoneyMetric(
+                currency=currency,
+                gross_sales_pence=values.get("gross_sales_pence", 0),
+                paid_revenue_pence=paid_revenue,
+                pending_value_pence=values.get("pending_value_pence", 0),
+                discount_pence=values.get("discount_pence", 0),
+                paid_order_count=paid_count,
+                free_order_count=values.get("free_order_count", 0),
+                average_order_value_pence=int(paid_revenue / paid_count) if paid_count else 0,
+            )
+        )
+    return result
+
+
+def _order_currency(order: Order) -> str:
+    return (order.currency or "GBP").upper()
+
+
+def _range_start(range_value: str, now: datetime) -> datetime | None:
+    ranges = {
+        "7d": 7,
+        "30d": 30,
+        "90d": 90,
+        "365d": 365,
+    }
+    if range_value == "all":
+        return None
+    return now - timedelta(days=ranges.get(range_value, 30))
+
+
+def _orders_for_metrics(
+    db: Session,
+    *,
+    event_id: int | None,
+    date_field,
+    start_at: datetime | None,
+    end_at: datetime,
+) -> list[Order]:
+    query = db.query(Order).options(
+        joinedload(Order.items).joinedload(OrderItem.photo).joinedload(Photo.event),
+        joinedload(Order.delivery),
+    )
+    if start_at is not None:
+        query = query.filter(date_field >= start_at)
+    query = query.filter(date_field <= end_at)
+    if event_id is not None:
+        query = query.filter(Order.id.in_(_event_order_ids(db, event_id)))
+    return query.all()
+
+
+def _activity_out(activity: OrderActivity) -> AdminActivityOut:
+    return AdminActivityOut(
+        id=activity.id,
+        source="activity",
+        action=activity.action,
+        actor=activity.actor,
+        message=activity.message,
+        order_id=activity.order_id,
+        created_at=activity.created_at,
+        metadata=activity.metadata_json or {},
+    )
+
+
+def _communication_activity_out(comm: Communication) -> AdminActivityOut:
+    return AdminActivityOut(
+        id=comm.id,
+        source="communication",
+        action=comm.kind.value,
+        actor=comm.initiated_by,
+        message=comm.subject,
+        status=comm.status.value,
+        order_id=comm.order_id,
+        created_at=comm.created_at,
+        metadata={
+            "recipient_email": comm.recipient_email,
+            "sent_at": comm.sent_at.isoformat() if comm.sent_at else None,
+            "error_message": comm.error_message,
+        },
+    )
+
+
+def _stripe_event_activity_out(event: StripeEvent) -> AdminActivityOut:
+    return AdminActivityOut(
+        id=event.id,
+        source="stripe",
+        action=event.event_type,
+        actor="stripe",
+        message=f"Stripe event {event.event_type}",
+        status=event.processing_status,
+        order_id=event.order_id,
+        created_at=event.received_at,
+        metadata={
+            "stripe_event_id": event.stripe_event_id,
+            "stripe_session_id": event.stripe_session_id,
+            "payment_intent_id": event.payment_intent_id,
+            "error_message": event.error_message,
+        },
+    )
+
+
+def _admin_activity_feed(db: Session, *, order_id: int | None = None, limit: int = 20) -> list[AdminActivityOut]:
+    activities_query = db.query(OrderActivity)
+    comms_query = db.query(Communication)
+    stripe_query = db.query(StripeEvent)
+    if order_id is not None:
+        activities_query = activities_query.filter(OrderActivity.order_id == order_id)
+        comms_query = comms_query.filter(Communication.order_id == order_id)
+        stripe_query = stripe_query.filter(StripeEvent.order_id == order_id)
+
+    entries = (
+        [_activity_out(item) for item in activities_query.order_by(OrderActivity.created_at.desc()).limit(limit).all()]
+        + [_communication_activity_out(item) for item in comms_query.order_by(Communication.created_at.desc()).limit(limit).all()]
+        + [_stripe_event_activity_out(item) for item in stripe_query.order_by(StripeEvent.received_at.desc()).limit(limit).all()]
+    )
+    return sorted(entries, key=lambda entry: entry.created_at, reverse=True)[:limit]
+
+
+def _build_operational_alerts(
+    db: Session,
+    *,
+    event_id: int | None,
+    now: datetime,
+) -> list[AdminOperationalAlert]:
+    def order_scope(query):
+        if event_id is None:
+            return query
+        return query.filter(Order.id.in_(_event_order_ids(db, event_id)))
+
+    alerts: list[AdminOperationalAlert] = []
+
+    stuck_pending = (
+        order_scope(db.query(Order.id))
+        .filter(Order.status == OrderStatus.PENDING, Order.created_at < now - timedelta(hours=24))
+        .order_by(Order.created_at.asc())
+        .all()
+    )
+    if stuck_pending:
+        alerts.append(
+            AdminOperationalAlert(
+                type="STUCK_PENDING",
+                severity="warning",
+                count=len(stuck_pending),
+                message="Pending orders older than 24 hours may need Stripe reconciliation.",
+                order_ids=[row[0] for row in stuck_pending[:10]],
+            )
+        )
+
+    failed_orders = (
+        order_scope(db.query(Order.id))
+        .filter(Order.status == OrderStatus.FAILED)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+    if failed_orders:
+        alerts.append(
+            AdminOperationalAlert(
+                type="FAILED_ORDERS",
+                severity="critical",
+                count=len(failed_orders),
+                message="Orders are marked failed.",
+                order_ids=[row[0] for row in failed_orders[:10]],
+            )
+        )
+
+    failed_zips = (
+        order_scope(db.query(Order.id).join(Delivery, Delivery.order_id == Order.id))
+        .filter(Delivery.zip_status == DeliveryZipStatus.FAILED)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+    if failed_zips:
+        alerts.append(
+            AdminOperationalAlert(
+                type="FAILED_ZIPS",
+                severity="critical",
+                count=len(failed_zips),
+                message="ZIP builds have failed and may need rebuilding.",
+                order_ids=[row[0] for row in failed_zips[:10]],
+            )
+        )
+
+    expired_links = (
+        order_scope(db.query(Order.id).join(Delivery, Delivery.order_id == Order.id))
+        .filter(Delivery.expires_at < now)
+        .order_by(Delivery.expires_at.asc())
+        .all()
+    )
+    if expired_links:
+        alerts.append(
+            AdminOperationalAlert(
+                type="EXPIRED_LINKS",
+                severity="warning",
+                count=len(expired_links),
+                message="Delivery links have expired.",
+                order_ids=[row[0] for row in expired_links[:10]],
+            )
+        )
+
+    expiring_links = (
+        order_scope(db.query(Order.id).join(Delivery, Delivery.order_id == Order.id))
+        .filter(Delivery.expires_at >= now, Delivery.expires_at <= now + timedelta(hours=48))
+        .order_by(Delivery.expires_at.asc())
+        .all()
+    )
+    if expiring_links:
+        alerts.append(
+            AdminOperationalAlert(
+                type="EXPIRING_LINKS",
+                severity="info",
+                count=len(expiring_links),
+                message="Delivery links expire within 48 hours.",
+                order_ids=[row[0] for row in expiring_links[:10]],
+            )
+        )
+
+    max_downloads = (
+        order_scope(db.query(Order.id).join(Delivery, Delivery.order_id == Order.id))
+        .filter(Delivery.download_count >= Delivery.max_downloads)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+    if max_downloads:
+        alerts.append(
+            AdminOperationalAlert(
+                type="MAX_DOWNLOADS",
+                severity="warning",
+                count=len(max_downloads),
+                message="Download limits have been reached.",
+                order_ids=[row[0] for row in max_downloads[:10]],
+            )
+        )
+
+    failed_email_query = (
+        db.query(Communication.order_id)
+        .filter(Communication.status.in_([
+            CommunicationStatus.FAILED,
+            CommunicationStatus.BOUNCED,
+            CommunicationStatus.BLOCKED,
+        ]))
+        .order_by(Communication.created_at.desc())
+    )
+    if event_id is not None:
+        failed_email_query = failed_email_query.filter(Communication.order_id.in_(_event_order_ids(db, event_id)))
+    failed_emails = failed_email_query.all()
+    if failed_emails:
+        alerts.append(
+            AdminOperationalAlert(
+                type="FAILED_EMAILS",
+                severity="warning",
+                count=len(failed_emails),
+                message="Transactional emails failed, bounced, or were blocked.",
+                order_ids=[row[0] for row in failed_emails[:10] if row[0] is not None],
+            )
+        )
+
+    return alerts
+
+
+def _stripe_session_dict(session) -> dict:
+    if isinstance(session, dict):
+        return session
+    try:
+        as_dict = dict(session)
+        if as_dict:
+            return as_dict
+    except Exception:
+        pass
+    return {
+        "id": getattr(session, "id", None),
+        "status": getattr(session, "status", None),
+        "payment_status": getattr(session, "payment_status", None),
+        "payment_intent": getattr(session, "payment_intent", None),
+        "customer_email": getattr(session, "customer_email", None),
+    }
+
+
+def _apply_stripe_session_to_order(order: Order, session: dict, db: Session, *, actor: str) -> bool:
+    payment_status = session.get("payment_status")
+    status = session.get("status")
+    changed = False
+
+    if payment_status == "paid" or status == "complete":
+        if order.status == OrderStatus.PENDING:
+            mark_order_ready(
+                order,
+                db,
+                payment_intent_id=session.get("payment_intent"),
+                customer_email=session.get("customer_email"),
+                initiated_by=actor,
+            )
+            record_order_activity(
+                db,
+                order_id=order.id,
+                action="STRIPE_SYNC_COMPLETED",
+                message="Order marked ready after Stripe sync",
+                actor=actor,
+                metadata={"stripe_session_id": session.get("id")},
+            )
+            changed = True
+    elif status == "expired" and order.status == OrderStatus.PENDING:
+        order.status = OrderStatus.FAILED
+        record_order_activity(
+            db,
+            order_id=order.id,
+            action="STRIPE_SYNC_EXPIRED",
+            message="Order marked failed after Stripe reported an expired session",
+            actor=actor,
+            metadata={"stripe_session_id": session.get("id")},
+        )
+        changed = True
+
+    if session.get("payment_intent") and order.stripe_payment_intent_id != session.get("payment_intent"):
+        order.stripe_payment_intent_id = session.get("payment_intent")
+        changed = True
+    if session.get("customer_email") and order.email != session.get("customer_email"):
+        order.email = session.get("customer_email")
+        changed = True
+    return changed
+
+
 @router.post("/login", response_model=AdminSessionOut)
 def admin_login(
     req: AdminLoginRequest,
@@ -445,6 +895,252 @@ def get_admin_stats(db: Session = Depends(get_db)) -> AdminStatsOut:
         pending_orders=db.query(Order).filter(Order.status == OrderStatus.PENDING).count(),
         failed_orders=db.query(Order).filter(Order.status == OrderStatus.FAILED).count(),
         active_events=db.query(Event).filter(Event.status == EventStatus.ACTIVE).count(),
+    )
+
+
+@router.get("/metrics", response_model=AdminMetricsOut, dependencies=[Depends(require_admin)])
+def get_admin_metrics(
+    range: str = Query(default="30d", pattern="^(7d|30d|90d|365d|all)$"),
+    event_id: int | None = None,
+    db: Session = Depends(get_db),
+) -> AdminMetricsOut:
+    now = datetime.now(timezone.utc)
+    start_at = _range_start(range, now)
+
+    if event_id is not None and not db.query(Event.id).filter(Event.id == event_id).first():
+        raise HTTPException(404, "Event not found")
+
+    created_orders = _orders_for_metrics(
+        db,
+        event_id=event_id,
+        date_field=Order.created_at,
+        start_at=start_at,
+        end_at=now,
+    )
+    paid_orders = _orders_for_metrics(
+        db,
+        event_id=event_id,
+        date_field=Order.paid_at,
+        start_at=start_at,
+        end_at=now,
+    )
+
+    money = _money_groups()
+    status_totals: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "subtotal": 0})
+    daily: dict[str, AdminTrendPoint] = {}
+    customer_totals: dict[str, dict] = {}
+    event_totals: dict[str, dict] = {}
+    photo_totals: dict[str, dict] = {}
+
+    for order in created_orders:
+        subtotal = _order_subtotal_pence(order)
+        currency = _order_currency(order)
+        status_key = order.status.value
+        status_totals[status_key]["count"] += 1
+        status_totals[status_key]["subtotal"] += subtotal
+        if order.status == OrderStatus.PENDING:
+            money[currency]["pending_value_pence"] += subtotal
+
+        day_key = order.created_at.date().isoformat()
+        if day_key not in daily:
+            daily[day_key] = AdminTrendPoint(date=day_key)
+        daily[day_key].order_count += 1
+        daily[day_key].item_count += len(order.items)
+
+    for order in paid_orders:
+        subtotal = _order_subtotal_pence(order)
+        discount = sum(max(0, item.discount_applied_pence) for item in order.items)
+        currency = _order_currency(order)
+        group = money[currency]
+        group["gross_sales_pence"] += subtotal
+        group["paid_revenue_pence"] += subtotal
+        group["discount_pence"] += discount
+        group["paid_order_count"] += 1
+        if subtotal == 0:
+            group["free_order_count"] += 1
+
+        paid_day = (order.paid_at or order.created_at).date().isoformat()
+        if paid_day not in daily:
+            daily[paid_day] = AdminTrendPoint(date=paid_day)
+        daily[paid_day].paid_order_count += 1
+        daily[paid_day].revenue_by_currency[currency] = (
+            daily[paid_day].revenue_by_currency.get(currency, 0) + subtotal
+        )
+
+        email = (order.email or "").strip().lower()
+        if email:
+            if email not in customer_totals:
+                customer_totals[email] = {
+                    "order_count": 0,
+                    "paid_order_count": 0,
+                    "last_order_at": order.paid_at or order.created_at,
+                    "money": _money_groups(),
+                }
+            customer_totals[email]["order_count"] += 1
+            customer_totals[email]["paid_order_count"] += 1
+            customer_totals[email]["last_order_at"] = max(
+                customer_totals[email]["last_order_at"],
+                order.paid_at or order.created_at,
+            )
+            customer_totals[email]["money"][currency]["gross_sales_pence"] += subtotal
+            customer_totals[email]["money"][currency]["paid_revenue_pence"] += subtotal
+            customer_totals[email]["money"][currency]["paid_order_count"] += 1
+
+        first_photo = order.items[0].photo if order.items and order.items[0].photo else None
+        event = first_photo.event if first_photo else None
+        event_slug = event.slug if event else (order.delivery.event_slug if order.delivery else "unknown")
+        event_key = str(event.id if event else event_slug)
+        if event_key not in event_totals:
+            event_totals[event_key] = {
+                "event_id": event.id if event else None,
+                "event_slug": event_slug,
+                "event_name": event.name if event else event_slug,
+                "order_count": 0,
+                "paid_order_count": 0,
+                "item_count": 0,
+                "money": _money_groups(),
+            }
+        event_totals[event_key]["order_count"] += 1
+        event_totals[event_key]["paid_order_count"] += 1
+        event_totals[event_key]["item_count"] += len(order.items)
+        event_totals[event_key]["money"][currency]["gross_sales_pence"] += subtotal
+        event_totals[event_key]["money"][currency]["paid_revenue_pence"] += subtotal
+        event_totals[event_key]["money"][currency]["paid_order_count"] += 1
+
+        for item in order.items:
+            photo = item.photo
+            photo_event = photo.event if photo else None
+            if item.photo_id not in photo_totals:
+                photo_totals[item.photo_id] = {
+                    "photo_id": item.photo_id,
+                    "event_slug": photo_event.slug if photo_event else None,
+                    "event_name": photo_event.name if photo_event else None,
+                    "item_count": 0,
+                    "order_ids": set(),
+                    "money": _money_groups(),
+                }
+            line_total = _line_total_pence(item)
+            photo_totals[item.photo_id]["item_count"] += 1
+            photo_totals[item.photo_id]["order_ids"].add(order.id)
+            photo_totals[item.photo_id]["money"][currency]["gross_sales_pence"] += line_total
+            photo_totals[item.photo_id]["money"][currency]["paid_revenue_pence"] += line_total
+            photo_totals[item.photo_id]["money"][currency]["paid_order_count"] += 1
+
+    delivery_counts: dict[str, int] = defaultdict(int)
+    for order in created_orders:
+        if order.delivery:
+            delivery_counts[order.delivery.zip_status.value] += 1
+        else:
+            delivery_counts["NO_DELIVERY"] += 1
+
+    comms_query = db.query(Communication)
+    if start_at is not None:
+        comms_query = comms_query.filter(Communication.created_at >= start_at)
+    comms_query = comms_query.filter(Communication.created_at <= now)
+    if event_id is not None:
+        comms_query = comms_query.filter(Communication.order_id.in_(_event_order_ids(db, event_id)))
+    email_counts: dict[str, int] = defaultdict(int)
+    for comm in comms_query.all():
+        email_counts[comm.status.value] += 1
+
+    paid_customer_counts: dict[str, int] = defaultdict(int)
+    for order in paid_orders:
+        if order.email:
+            paid_customer_counts[order.email.strip().lower()] += 1
+
+    alerts = _build_operational_alerts(db, event_id=event_id, now=now)
+    recent_activity = _admin_activity_feed(db, limit=12)
+
+    totals = AdminMetricsTotals(
+        total_orders=len(created_orders),
+        paid_orders=len(paid_orders),
+        pending_orders=sum(1 for order in created_orders if order.status == OrderStatus.PENDING),
+        failed_orders=sum(1 for order in created_orders if order.status == OrderStatus.FAILED),
+        ready_orders=sum(1 for order in created_orders if order.status == OrderStatus.READY),
+        free_orders=sum(1 for order in paid_orders if _order_subtotal_pence(order) == 0),
+        items_sold=sum(len(order.items) for order in paid_orders),
+        unique_customers=len(paid_customer_counts),
+        repeat_customers=sum(1 for count in paid_customer_counts.values() if count > 1),
+        average_items_per_order=(
+            round(sum(len(order.items) for order in paid_orders) / len(paid_orders), 2)
+            if paid_orders else 0
+        ),
+    )
+
+    return AdminMetricsOut(
+        range=range,
+        generated_at=now,
+        start_at=start_at,
+        end_at=now,
+        event_id=event_id,
+        mixed_currency=len(money.keys()) > 1,
+        totals=totals,
+        money=_money_metric_list(money),
+        status_breakdown=[
+            AdminBreakdownMetric(
+                key=key,
+                label=key.replace("_", " ").title(),
+                count=values["count"],
+                subtotal_pence=values["subtotal"],
+            )
+            for key, values in sorted(status_totals.items())
+        ],
+        delivery_health=[
+            AdminBreakdownMetric(key=key, label=key.replace("_", " ").title(), count=count)
+            for key, count in sorted(delivery_counts.items())
+        ],
+        email_health=[
+            AdminBreakdownMetric(key=key, label=key.replace("_", " ").title(), count=count)
+            for key, count in sorted(email_counts.items())
+        ],
+        top_events=[
+            AdminEventMetric(
+                event_id=values["event_id"],
+                event_slug=values["event_slug"],
+                event_name=values["event_name"],
+                order_count=values["order_count"],
+                paid_order_count=values["paid_order_count"],
+                item_count=values["item_count"],
+                gross_sales=_money_metric_list(values["money"]),
+            )
+            for values in sorted(
+                event_totals.values(),
+                key=lambda row: (row["paid_order_count"], row["item_count"]),
+                reverse=True,
+            )[:10]
+        ],
+        top_photos=[
+            AdminPhotoMetric(
+                photo_id=values["photo_id"],
+                event_slug=values["event_slug"],
+                event_name=values["event_name"],
+                item_count=values["item_count"],
+                order_count=len(values["order_ids"]),
+                gross_sales=_money_metric_list(values["money"]),
+            )
+            for values in sorted(
+                photo_totals.values(),
+                key=lambda row: (row["item_count"], len(row["order_ids"])),
+                reverse=True,
+            )[:10]
+        ],
+        top_customers=[
+            AdminCustomerMetric(
+                email=email,
+                order_count=values["order_count"],
+                paid_order_count=values["paid_order_count"],
+                last_order_at=values["last_order_at"],
+                gross_sales=_money_metric_list(values["money"]),
+            )
+            for email, values in sorted(
+                customer_totals.items(),
+                key=lambda item: (item[1]["paid_order_count"], item[1]["last_order_at"]),
+                reverse=True,
+            )[:10]
+        ],
+        daily_trends=[daily[key] for key in sorted(daily.keys())],
+        alerts=alerts,
+        recent_activity=recent_activity,
     )
 
 
@@ -635,6 +1331,9 @@ def delete_event(
     db.query(OrderItem).filter(OrderItem.photo_id.in_(photo_subq)).delete(synchronize_session="fetch")
 
     db.query(Delivery).filter(Delivery.event_slug == slug).delete(synchronize_session="fetch")
+    db.query(Order).filter(
+        Order.cart_id.in_(db.query(Cart.id).filter(Cart.event_id == event_id))
+    ).update({Order.cart_id: None}, synchronize_session=False)
     db.query(Cart).filter(Cart.event_id == event_id).delete(synchronize_session="fetch")
 
     photos_deleted = db.query(Photo).filter(Photo.event_id == event_id).delete(synchronize_session="fetch")
@@ -901,51 +1600,118 @@ def upload_photo(
 @router.get("/orders", response_model=AdminOrderListOut, dependencies=[Depends(require_admin)])
 def list_orders(
     status: OrderStatus | None = None,
+    zip_status: DeliveryZipStatus | None = None,
+    event_id: int | None = None,
     q: str | None = Query(default=None, description="Search by order id/email/event slug/token"),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    sort: str = Query(default="id", pattern="^(id|created_at|paid_at|status|subtotal|items)$"),
+    direction: str = Query(default="desc", pattern="^(asc|desc)$"),
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    paid_from: datetime | None = None,
+    paid_to: datetime | None = None,
     db: Session = Depends(get_db),
 ) -> AdminOrderListOut:
-    item_count_subq = (
-        db.query(OrderItem.order_id, func.count(OrderItem.id).label("item_count"))
-        .group_by(OrderItem.order_id)
-        .subquery()
+    if limit is not None:
+        page_size = limit
+
+    query, item_stats = _admin_order_query(
+        db,
+        status=status,
+        zip_status=zip_status,
+        event_id=event_id,
+        q=q,
+        created_from=created_from,
+        created_to=created_to,
+        paid_from=paid_from,
+        paid_to=paid_to,
     )
 
-    query = (
-        db.query(Order, Delivery, item_count_subq.c.item_count)
-        .outerjoin(Delivery, Delivery.order_id == Order.id)
-        .outerjoin(item_count_subq, item_count_subq.c.order_id == Order.id)
-        .options(joinedload(Order.items))
-        .order_by(Order.id.desc())
+    total = query.count()
+    rows = (
+        _apply_order_sort(query, item_stats, sort, direction)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
     )
-
-    if status:
-        query = query.filter(Order.status == status)
-
-    # When a free-text search is requested we must filter first and limit after,
-    # otherwise the limit can silently drop matching rows.
-    if q:
-        rows = query.all()
-        needle = q.strip().lower()
-        filtered_rows = []
-        for order, delivery, item_count in rows:
-            haystack = [
-                str(order.id),
-                (order.email or "").lower(),
-                (delivery.event_slug.lower() if delivery else ""),
-                (delivery.token.lower() if delivery else ""),
-            ]
-            if any(needle in h for h in haystack):
-                filtered_rows.append((order, delivery, item_count))
-        rows = filtered_rows[:limit]
-    else:
-        rows = query.limit(limit).all()
 
     result: list[AdminOrderOut] = []
-    for order, delivery, item_count in rows:
+    for order, delivery, item_count, _subtotal_pence in rows:
         result.append(_to_admin_order_out(order, int(item_count or 0), delivery))
 
-    return AdminOrderListOut(orders=result)
+    return AdminOrderListOut(orders=result, total=total, page=page, page_size=page_size)
+
+
+@router.get("/orders/export", dependencies=[Depends(require_admin)])
+def export_orders(
+    status: OrderStatus | None = None,
+    zip_status: DeliveryZipStatus | None = None,
+    event_id: int | None = None,
+    q: str | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    paid_from: datetime | None = None,
+    paid_to: datetime | None = None,
+    db: Session = Depends(get_db),
+) -> Response:
+    query, item_stats = _admin_order_query(
+        db,
+        status=status,
+        zip_status=zip_status,
+        event_id=event_id,
+        q=q,
+        created_from=created_from,
+        created_to=created_to,
+        paid_from=paid_from,
+        paid_to=paid_to,
+    )
+    rows = _apply_order_sort(query, item_stats, "id", "desc").all()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "order_id",
+        "status",
+        "zip_status",
+        "email",
+        "event_slug",
+        "created_at",
+        "paid_at",
+        "item_count",
+        "subtotal_pence",
+        "currency",
+        "download_count",
+        "max_downloads",
+        "expires_at",
+        "stripe_session_id",
+        "stripe_payment_intent_id",
+    ])
+    for order, delivery, item_count, _subtotal_pence in rows:
+        writer.writerow([
+            order.id,
+            order.status.value,
+            delivery.zip_status.value if delivery else "",
+            order.email,
+            delivery.event_slug if delivery else "",
+            order.created_at.isoformat() if order.created_at else "",
+            order.paid_at.isoformat() if order.paid_at else "",
+            int(item_count or 0),
+            _order_subtotal_pence(order),
+            _order_currency(order),
+            delivery.download_count if delivery else "",
+            delivery.max_downloads if delivery else "",
+            delivery.expires_at.isoformat() if delivery and delivery.expires_at else "",
+            order.stripe_session_id,
+            order.stripe_payment_intent_id or "",
+        ])
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="admin-orders.csv"'},
+    )
 
 
 @router.get("/orders/{order_id}", response_model=AdminOrderDetailOut, dependencies=[Depends(require_admin)])
@@ -973,6 +1739,17 @@ def get_order_detail(order_id: int, db: Session = Depends(get_db)) -> AdminOrder
             for item in sorted(order.items, key=lambda i: i.id)
         ],
     )
+
+
+@router.get(
+    "/orders/{order_id}/timeline",
+    response_model=AdminOrderTimelineOut,
+    dependencies=[Depends(require_admin)],
+)
+def get_order_timeline(order_id: int, db: Session = Depends(get_db)) -> AdminOrderTimelineOut:
+    if not db.query(Order.id).filter(Order.id == order_id).first():
+        raise HTTPException(404, "Order not found")
+    return AdminOrderTimelineOut(entries=_admin_activity_feed(db, order_id=order_id, limit=100))
 
 
 @router.post(
@@ -1006,6 +1783,18 @@ def reset_delivery(
             raise HTTPException(400, "max_downloads must be between 1 and 100")
         delivery.max_downloads = req.max_downloads
 
+    record_order_activity(
+        db,
+        order_id=order_id,
+        action="DELIVERY_RESET",
+        message="Delivery access reset by admin",
+        actor="admin",
+        metadata={
+            "rotate_token": req.rotate_token,
+            "days_valid": req.days_valid,
+            "max_downloads": delivery.max_downloads,
+        },
+    )
     db.commit()
     db.refresh(delivery)
 
@@ -1021,6 +1810,14 @@ def reset_delivery(
             initiated_by="admin",
         )
         db.add(comm)
+        record_order_activity(
+            db,
+            order_id=order_id,
+            action="EMAIL_QUEUED",
+            message="Delivery reset email queued",
+            actor="admin",
+            metadata={"kind": CommunicationKind.DELIVERY_RESET.value},
+        )
         db.commit()
         celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
 
@@ -1045,6 +1842,13 @@ def expire_delivery(order_id: int, db: Session = Depends(get_db)) -> AdminOrderO
 
     delivery.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     order.status = OrderStatus.EXPIRED
+    record_order_activity(
+        db,
+        order_id=order_id,
+        action="DELIVERY_EXPIRED",
+        message="Delivery link expired by admin",
+        actor="admin",
+    )
     db.commit()
     db.refresh(delivery)
     db.refresh(order)
@@ -1076,6 +1880,13 @@ def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrde
     delivery.zip_error = None
     delivery.zip_deleted_at = None
     delivery.zip_expires_at = None
+    record_order_activity(
+        db,
+        order_id=order_id,
+        action="ZIP_REBUILD_QUEUED",
+        message="ZIP rebuild queued by admin",
+        actor="admin",
+    )
     db.commit()
 
     celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
@@ -1138,12 +1949,169 @@ def send_communication(
         initiated_by="admin",
     )
     db.add(comm)
+    record_order_activity(
+        db,
+        order_id=order_id,
+        action="EMAIL_QUEUED",
+        message=f"{req.kind.value.replace('_', ' ').title()} email queued by admin",
+        actor="admin",
+        metadata={"kind": req.kind.value},
+    )
     db.commit()
     db.refresh(comm)
 
     celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
 
     return comm  # type: ignore[return-value]
+
+
+@router.post(
+    "/orders/{order_id}/stripe-sync",
+    response_model=AdminStripeSyncOut,
+    dependencies=[Depends(require_admin)],
+)
+def sync_order_with_stripe(order_id: int, db: Session = Depends(get_db)) -> AdminStripeSyncOut:
+    if not settings.STRIPE_SECRET_KEY:
+        return AdminStripeSyncOut(
+            order_id=order_id,
+            status="unconfigured",
+            message="Stripe is not configured on this server",
+            orders_checked=0,
+            orders_updated=0,
+        )
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if not order.stripe_session_id or order.stripe_session_id.startswith(("pending_", "free_")):
+        return AdminStripeSyncOut(
+            order_id=order.id,
+            status="skipped",
+            message="Order does not have a Stripe Checkout session to sync",
+            orders_checked=1,
+            orders_updated=0,
+        )
+
+    try:
+        session = _stripe_session_dict(stripe.checkout.Session.retrieve(order.stripe_session_id))
+    except Exception as exc:
+        record_order_activity(
+            db,
+            order_id=order.id,
+            action="STRIPE_SYNC_FAILED",
+            message="Stripe sync failed",
+            actor="admin",
+            metadata={"error": str(exc)},
+        )
+        db.commit()
+        return AdminStripeSyncOut(
+            order_id=order.id,
+            status="failed",
+            message=f"Stripe sync failed: {exc}",
+            orders_checked=1,
+            orders_updated=0,
+        )
+
+    store_stripe_event(
+        db,
+        {
+            "id": f"manual_sync_{order.id}_{uuid.uuid4()}",
+            "type": "checkout.session.sync",
+            "livemode": False,
+            "created": int(datetime.now(timezone.utc).timestamp()),
+            "data": {"object": session},
+        },
+    )
+    changed = _apply_stripe_session_to_order(order, session, db, actor="admin")
+    if not changed:
+        record_order_activity(
+            db,
+            order_id=order.id,
+            action="STRIPE_SYNC_NO_CHANGE",
+            message="Stripe sync found no order changes",
+            actor="admin",
+            metadata={"stripe_session_id": order.stripe_session_id},
+        )
+    db.commit()
+
+    return AdminStripeSyncOut(
+        order_id=order.id,
+        status="updated" if changed else "unchanged",
+        message="Order updated from Stripe" if changed else "Stripe sync completed with no changes",
+        orders_checked=1,
+        orders_updated=1 if changed else 0,
+    )
+
+
+@router.post(
+    "/stripe/reconcile",
+    response_model=AdminStripeSyncOut,
+    dependencies=[Depends(require_admin)],
+)
+def reconcile_stale_stripe_orders(
+    older_than_minutes: int = Query(default=15, ge=1, le=10080),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> AdminStripeSyncOut:
+    if not settings.STRIPE_SECRET_KEY:
+        return AdminStripeSyncOut(
+            status="unconfigured",
+            message="Stripe is not configured on this server",
+            orders_checked=0,
+            orders_updated=0,
+        )
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    orders = (
+        db.query(Order)
+        .filter(
+            Order.status == OrderStatus.PENDING,
+            Order.created_at <= cutoff,
+            ~Order.stripe_session_id.startswith("pending_"),
+            ~Order.stripe_session_id.startswith("free_"),
+        )
+        .order_by(Order.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+    checked = 0
+    updated = 0
+    failures = 0
+    for order in orders:
+        checked += 1
+        try:
+            session = _stripe_session_dict(stripe.checkout.Session.retrieve(order.stripe_session_id))
+            store_stripe_event(
+                db,
+                {
+                    "id": f"manual_reconcile_{order.id}_{uuid.uuid4()}",
+                    "type": "checkout.session.reconcile",
+                    "livemode": False,
+                    "created": int(datetime.now(timezone.utc).timestamp()),
+                    "data": {"object": session},
+                },
+            )
+            if _apply_stripe_session_to_order(order, session, db, actor="admin"):
+                updated += 1
+        except Exception as exc:
+            failures += 1
+            record_order_activity(
+                db,
+                order_id=order.id,
+                action="STRIPE_RECONCILE_FAILED",
+                message="Stripe reconciliation failed",
+                actor="admin",
+                metadata={"error": str(exc), "stripe_session_id": order.stripe_session_id},
+            )
+
+    db.commit()
+    return AdminStripeSyncOut(
+        status="completed" if failures == 0 else "partial",
+        message=f"Checked {checked} stale pending order(s); updated {updated}; failures {failures}.",
+        orders_checked=checked,
+        orders_updated=updated,
+    )
 
 
 # ── Email config & test ──────────────────────────────────────────────────────

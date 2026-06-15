@@ -410,9 +410,10 @@ def _create_ready_order_with_delivery(db_session, test_photos):
     from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
 
     order = Order(
-        stripe_session_id="cs_test_admin_orders",
+        stripe_session_id=f"cs_test_admin_orders_{uuid.uuid4().hex}",
         email="runner@example.com",
         status=OrderStatus.READY,
+        paid_at=datetime.now(timezone.utc),
     )
     db_session.add(order)
     db_session.flush()
@@ -525,6 +526,140 @@ def test_admin_rebuild_zip_enqueues_and_clears_delivery(
     assert db_order.status.value == "READY"
 
     mock_celery_send_task.assert_called_with("tasks.build_zip.build_zip", args=[order.id])
+
+
+def test_admin_metrics_returns_order_revenue_delivery_and_email_health(admin_client, db_session, test_photos):
+    from photostore.models import Communication, CommunicationKind, CommunicationStatus
+
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+    db_session.add(Communication(
+        order_id=order.id,
+        kind=CommunicationKind.DOWNLOAD_READY,
+        status=CommunicationStatus.FAILED,
+        provider="brevo",
+        recipient_email=order.email,
+        subject="Failed message",
+        template_key="DOWNLOAD_READY",
+    ))
+    db_session.flush()
+
+    resp = admin_client.get("/api/admin/metrics?range=all")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["totals"]["paid_orders"] >= 1
+    assert data["totals"]["items_sold"] >= 3
+    assert data["money"][0]["gross_sales_pence"] >= 1500
+    assert any(row["key"] == "READY" for row in data["status_breakdown"])
+    assert any(row["key"] == "READY" for row in data["delivery_health"])
+    assert any(row["key"] == "FAILED" for row in data["email_health"])
+    assert data["top_events"][0]["event_slug"] == test_photos[0].event.slug
+
+
+def test_admin_metrics_event_filter_and_missing_event(admin_client, db_session, test_event, test_photos):
+    _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.get(f"/api/admin/metrics?range=all&event_id={test_event.id}")
+    assert resp.status_code == 200
+    assert resp.json()["event_id"] == test_event.id
+
+    missing = admin_client.get("/api/admin/metrics?range=all&event_id=999999")
+    assert missing.status_code == 404
+
+
+def test_admin_list_orders_filters_paginates_and_searches_in_db(admin_client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.get(
+        "/api/admin/orders",
+        params={
+            "q": "runner@example.com",
+            "zip_status": "READY",
+            "page_size": 1,
+            "page": 1,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    assert data["page"] == 1
+    assert data["page_size"] == 1
+    assert data["orders"][0]["id"] == order.id
+    assert data["orders"][0]["zip_status"] == "READY"
+
+
+def test_admin_orders_export_returns_csv(admin_client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.get("/api/admin/orders/export")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "order_id,status,zip_status" in resp.text
+    assert f"{order.id},READY,READY" in resp.text
+
+
+def test_admin_order_timeline_includes_admin_activity(admin_client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    reset = admin_client.post(
+        f"/api/admin/orders/{order.id}/reset-delivery",
+        json={"rotate_token": False, "days_valid": 30},
+    )
+    assert reset.status_code == 200
+
+    resp = admin_client.get(f"/api/admin/orders/{order.id}/timeline")
+    assert resp.status_code == 200
+    actions = [entry["action"] for entry in resp.json()["entries"]]
+    assert "DELIVERY_RESET" in actions
+
+
+def test_admin_stripe_sync_unconfigured_returns_status(admin_client, db_session, test_photos):
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+
+    resp = admin_client.post(f"/api/admin/orders/{order.id}/stripe-sync")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "unconfigured"
+
+
+def test_admin_stripe_sync_marks_pending_order_ready(
+    admin_client, db_session, test_photos, monkeypatch
+):
+    from unittest.mock import patch
+    from photostore.config import settings
+    from photostore.models import Delivery, Order, OrderItem, OrderStatus
+
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_fake")
+    order = Order(
+        stripe_session_id="cs_test_sync",
+        email="runner@example.com",
+        status=OrderStatus.PENDING,
+    )
+    db_session.add(order)
+    db_session.flush()
+    for photo in test_photos:
+        db_session.add(OrderItem(order_id=order.id, photo_id=photo.id, unit_price_pence=500))
+    db_session.flush()
+
+    with patch("app.routes.admin.stripe.checkout.Session.retrieve", return_value={
+        "id": "cs_test_sync",
+        "status": "complete",
+        "payment_status": "paid",
+        "payment_intent": "pi_sync",
+        "customer_email": "runner@example.com",
+    }):
+        resp = admin_client.post(f"/api/admin/orders/{order.id}/stripe-sync")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "updated"
+    db_session.refresh(order)
+    assert order.status == OrderStatus.READY
+    assert order.stripe_payment_intent_id == "pi_sync"
+    assert db_session.query(Delivery).filter(Delivery.order_id == order.id).first() is not None
+
+
+def test_admin_stripe_reconcile_unconfigured_returns_status(admin_client):
+    resp = admin_client.post("/api/admin/stripe/reconcile")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "unconfigured"
 
 
 # ── Admin events list (S2) ────────────────────────────────────────────────────

@@ -254,6 +254,9 @@ class AdminOrderOut(BaseModel):
 
 class AdminOrderListOut(BaseModel):
     orders: list[AdminOrderOut]
+    total: int = 0
+    page: int = 1
+    page_size: int = 100
 
 
 class AdminOrderItemOut(BaseModel):
@@ -281,6 +284,124 @@ class AdminStatsOut(BaseModel):
     pending_orders: int
     failed_orders: int
     active_events: int
+
+
+class AdminMoneyMetric(BaseModel):
+    currency: str
+    gross_sales_pence: int = 0
+    paid_revenue_pence: int = 0
+    pending_value_pence: int = 0
+    discount_pence: int = 0
+    paid_order_count: int = 0
+    free_order_count: int = 0
+    average_order_value_pence: int = 0
+
+
+class AdminBreakdownMetric(BaseModel):
+    key: str
+    label: str
+    count: int
+    subtotal_pence: int = 0
+
+
+class AdminTrendPoint(BaseModel):
+    date: str
+    order_count: int = 0
+    paid_order_count: int = 0
+    item_count: int = 0
+    revenue_by_currency: dict[str, int] = Field(default_factory=dict)
+
+
+class AdminEventMetric(BaseModel):
+    event_id: Optional[int] = None
+    event_slug: str
+    event_name: str
+    order_count: int = 0
+    paid_order_count: int = 0
+    item_count: int = 0
+    gross_sales: list[AdminMoneyMetric] = Field(default_factory=list)
+
+
+class AdminPhotoMetric(BaseModel):
+    photo_id: str
+    event_slug: Optional[str] = None
+    event_name: Optional[str] = None
+    item_count: int = 0
+    order_count: int = 0
+    gross_sales: list[AdminMoneyMetric] = Field(default_factory=list)
+
+
+class AdminCustomerMetric(BaseModel):
+    email: str
+    order_count: int = 0
+    paid_order_count: int = 0
+    last_order_at: Optional[datetime] = None
+    gross_sales: list[AdminMoneyMetric] = Field(default_factory=list)
+
+
+class AdminOperationalAlert(BaseModel):
+    type: str
+    severity: str
+    count: int
+    message: str
+    order_ids: list[int] = Field(default_factory=list)
+
+
+class AdminActivityOut(BaseModel):
+    id: int
+    source: str
+    action: str
+    actor: Optional[str] = None
+    message: str
+    status: Optional[str] = None
+    order_id: Optional[int] = None
+    created_at: datetime
+    metadata: dict = Field(default_factory=dict)
+
+
+class AdminMetricsTotals(BaseModel):
+    total_orders: int = 0
+    paid_orders: int = 0
+    pending_orders: int = 0
+    failed_orders: int = 0
+    ready_orders: int = 0
+    free_orders: int = 0
+    items_sold: int = 0
+    unique_customers: int = 0
+    repeat_customers: int = 0
+    average_items_per_order: float = 0
+
+
+class AdminMetricsOut(BaseModel):
+    range: str
+    generated_at: datetime
+    start_at: Optional[datetime] = None
+    end_at: datetime
+    event_id: Optional[int] = None
+    mixed_currency: bool = False
+    totals: AdminMetricsTotals
+    money: list[AdminMoneyMetric] = Field(default_factory=list)
+    status_breakdown: list[AdminBreakdownMetric] = Field(default_factory=list)
+    delivery_health: list[AdminBreakdownMetric] = Field(default_factory=list)
+    email_health: list[AdminBreakdownMetric] = Field(default_factory=list)
+    top_events: list[AdminEventMetric] = Field(default_factory=list)
+    top_photos: list[AdminPhotoMetric] = Field(default_factory=list)
+    top_customers: list[AdminCustomerMetric] = Field(default_factory=list)
+    daily_trends: list[AdminTrendPoint] = Field(default_factory=list)
+    alerts: list[AdminOperationalAlert] = Field(default_factory=list)
+    recent_activity: list[AdminActivityOut] = Field(default_factory=list)
+
+
+class AdminOrderTimelineOut(BaseModel):
+    entries: list[AdminActivityOut]
+
+
+class AdminStripeSyncOut(BaseModel):
+    order_id: Optional[int] = None
+    status: str
+    message: str
+    orders_checked: int = 0
+    orders_updated: int = 0
 
 
 class AdminLoginRequest(BaseModel):

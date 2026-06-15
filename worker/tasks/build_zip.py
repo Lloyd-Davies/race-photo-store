@@ -5,7 +5,7 @@ from pathlib import Path
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
-from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus, Photo
+from photostore.models import Delivery, DeliveryZipStatus, Order, OrderActivity, OrderItem, OrderStatus, Photo
 from photostore.storage import LocalStorageBackend, get_storage_backend
 
 ZIP_ERROR_MAX_LENGTH = 1000
@@ -17,6 +17,13 @@ def _record_zip_failure(db, order_id: int, exc: Exception) -> None:
         return
     delivery.zip_status = DeliveryZipStatus.FAILED
     delivery.zip_error = str(exc)[:ZIP_ERROR_MAX_LENGTH]
+    db.add(OrderActivity(
+        order_id=order_id,
+        actor="worker",
+        action="ZIP_BUILD_FAILED",
+        message="ZIP build failed",
+        metadata_json={"error": str(exc)[:ZIP_ERROR_MAX_LENGTH]},
+    ))
     db.commit()
 
 
@@ -35,6 +42,12 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         delivery.zip_status = DeliveryZipStatus.BUILDING
         delivery.zip_error = None
         delivery.zip_deleted_at = None
+        db.add(OrderActivity(
+            order_id=order_id,
+            actor="worker",
+            action="ZIP_BUILD_STARTED",
+            message="ZIP build started",
+        ))
         db.commit()
 
         items = (
@@ -92,6 +105,13 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         delivery.zip_error = None
         if order.status != OrderStatus.EXPIRED:
             order.status = OrderStatus.READY
+        db.add(OrderActivity(
+            order_id=order_id,
+            actor="worker",
+            action="ZIP_BUILD_READY",
+            message="ZIP build completed",
+            metadata_json={"zip_path": zip_key},
+        ))
         db.commit()
 
     except Exception as exc:

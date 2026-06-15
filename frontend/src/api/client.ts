@@ -71,3 +71,25 @@ export const apiPatch = <T>(path: string, body?: unknown) =>
 
 export const apiDelete = <T>(path: string) =>
   request<T>(path, { method: 'DELETE' })
+
+export const apiBlob = async (path: string, headers?: HeadersInit) => {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: getHeaders(headers, false),
+  })
+
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const body = await res.json()
+      if (typeof body?.detail === 'string' && body.detail.trim()) {
+        detail = body.detail
+      }
+    } catch {
+      const text = await res.text().catch(() => '')
+      if (text.trim()) detail = text.trim()
+    }
+    throw new Error(`${res.status}: ${detail}`)
+  }
+
+  return res.blob()
+}

@@ -5,6 +5,7 @@ import EventGallery from './pages/EventGallery'
 import Cart from './pages/Cart'
 import OrderStatus from './pages/OrderStatus'
 import AdminLayout from './pages/admin/AdminLayout'
+import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminEvents from './pages/admin/AdminEvents'
 import AdminIngest from './pages/admin/AdminIngest'
 import AdminOrderDetail from './pages/admin/AdminOrderDetail'
@@ -23,7 +24,8 @@ export default function App() {
 
         {/* Admin */}
         <Route path="admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="events" replace />} />
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="events" element={<AdminEvents />} />
           <Route path="events/:eventId/ingest" element={<AdminIngest />} />
           <Route path="orders" element={<AdminOrders />} />

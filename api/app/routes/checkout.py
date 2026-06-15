@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_db
 from app.fulfillment import mark_order_ready
+from app.order_activity import record_order_activity
 from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
 from photostore.celery_app import celery_app
@@ -56,6 +57,7 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     # success URL. The stripe_session_id gets a unique placeholder until the
     # real session ID is available a few lines below.
     order = Order(
+        cart_id=cart.id,
         stripe_session_id=f"pending_{_uuid.uuid4()}",
         email=req.email or cart.email or "",
         status=OrderStatus.PENDING,
@@ -73,11 +75,27 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
             )
         )
 
+    record_order_activity(
+        db,
+        order_id=order.id,
+        action="ORDER_CREATED",
+        message="Order created from checkout",
+        actor="system",
+        metadata={"cart_id": str(cart.id), "item_count": count},
+    )
+
     order_access_token, _ = create_order_access_token(order.id)
 
     if unit_amount_pence == 0:
         order.stripe_session_id = f"free_{_uuid.uuid4()}"
         comm_id = mark_order_ready(order, db)
+        record_order_activity(
+            db,
+            order_id=order.id,
+            action="ORDER_FULFILLED",
+            message="Free order fulfilled without Stripe payment",
+            actor="system",
+        )
         db.commit()
         if comm_id:
             celery_app.send_task("tasks.send_email.send_email", args=[comm_id])
@@ -109,6 +127,14 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     )
 
     order.stripe_session_id = session.id
+    record_order_activity(
+        db,
+        order_id=order.id,
+        action="STRIPE_CHECKOUT_CREATED",
+        message="Stripe Checkout session created",
+        actor="stripe",
+        metadata={"stripe_session_id": session.id},
+    )
     db.commit()
     db.refresh(order)
 

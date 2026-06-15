@@ -133,6 +133,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True)
+    cart_id = Column(UUID(as_uuid=True), ForeignKey("carts.id"), nullable=True, index=True)
     stripe_session_id = Column(String, unique=True, nullable=False, index=True)
     stripe_payment_intent_id = Column(String)
     email = Column(String, nullable=False)
@@ -144,6 +145,8 @@ class Order(Base):
     items = relationship("OrderItem", back_populates="order")
     delivery = relationship("Delivery", back_populates="order", uselist=False)
     communications = relationship("Communication", back_populates="order")
+    activities = relationship("OrderActivity", back_populates="order")
+    stripe_events = relationship("StripeEvent", back_populates="order")
 
 
 class OrderItem(Base):
@@ -213,6 +216,43 @@ class Communication(Base):
         Index("ix_communications_order_id_kind", "order_id", "kind"),
         # Partial unique index on dedupe_key (non-null only) — enforced via migration DDL
     )
+
+
+class OrderActivity(Base):
+    __tablename__ = "order_activity"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    actor = Column(String, nullable=False, default="system")
+    action = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    metadata_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    order = relationship("Order", back_populates="activities")
+
+    __table_args__ = (
+        Index("ix_order_activity_order_id_created_at", "order_id", "created_at"),
+    )
+
+
+class StripeEvent(Base):
+    __tablename__ = "stripe_events"
+
+    id = Column(Integer, primary_key=True)
+    stripe_event_id = Column(String, unique=True, nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    stripe_session_id = Column(String, nullable=True, index=True)
+    payment_intent_id = Column(String, nullable=True, index=True)
+    livemode = Column(Boolean, nullable=False, default=False)
+    payload_json = Column(JSON, nullable=False)
+    processing_status = Column(String, nullable=False, default="RECEIVED")
+    error_message = Column(String, nullable=True)
+    stripe_created_at = Column(DateTime(timezone=True), nullable=True)
+    received_at = Column(DateTime(timezone=True), default=utcnow)
+
+    order = relationship("Order", back_populates="stripe_events")
 
 
 class AppSettings(Base):
