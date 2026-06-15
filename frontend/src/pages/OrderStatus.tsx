@@ -42,6 +42,18 @@ function StatusStep({ label, done, active }: { label: string; done: boolean; act
   )
 }
 
+function formatZipExpiry(expiresAt?: string) {
+  if (!expiresAt) return null
+
+  const expiry = new Date(expiresAt)
+  if (Number.isNaN(expiry.getTime())) return null
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(expiry)
+}
+
 export default function OrderStatus() {
   const { orderId } = useParams<{ orderId: string }>()
   const location = useLocation()
@@ -117,6 +129,13 @@ export default function OrderStatus() {
     'inline-flex w-full items-center justify-center rounded-md bg-sky-500 px-6 py-2.5 text-base font-medium text-white shadow-sm transition-colors hover:bg-sky-600 active:bg-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500'
   const zipButtonClass =
     'inline-flex w-full items-center justify-center rounded-md px-6 py-2.5 text-base font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:pointer-events-none disabled:opacity-50'
+  const zipExpiry = formatZipExpiry(zip?.expires_at)
+  const zipStatusLine =
+    zip?.status === 'READY' && zipExpiry
+      ? `Ready until ${zipExpiry}`
+      : zip?.status === 'BUILDING'
+        ? 'This page will update automatically.'
+        : null
 
   const individualDownloads = status === 'READY' && downloadItems.length > 0 && (
     <section className="mt-6">
@@ -165,9 +184,23 @@ export default function OrderStatus() {
   )
 
   const zipAction = status === 'READY' && zip && (
-    <section className="mt-6">
+    <section className="mt-6 rounded-lg border border-surface-700 bg-surface-800/40 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-content">All photos</h2>
+          {zipStatusLine && (
+            <p className="mt-1 text-xs text-content-muted">{zipStatusLine}</p>
+          )}
+        </div>
+        {zip.status === 'BUILDING' || prepareZipMutation.isPending ? (
+          <Loader2 size={17} className="shrink-0 animate-spin text-sky-400" />
+        ) : (
+          <Download size={17} className="shrink-0 text-content-muted" />
+        )}
+      </div>
+
       {zip.status === 'READY' && zip.download_url ? (
-        <a href={zip.download_url} download className={zipLinkClass}>
+        <a href={zip.download_url} className={zipLinkClass}>
           <Download size={18} className="mr-2" />
           Download ZIP
         </a>
