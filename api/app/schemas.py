@@ -225,6 +225,18 @@ class PhotoIdsOut(BaseModel):
     photo_ids: list[str]
 
 
+class PhotoUploadStatusOut(BaseModel):
+    photo_id: str
+    record_exists: bool
+    proof_file_exists: bool
+    original_file_exists: bool
+    state: Optional[str] = None
+
+
+class PhotoUploadStatusesOut(BaseModel):
+    photos: list[PhotoUploadStatusOut]
+
+
 class DeleteEventResult(BaseModel):
     slug: str
     photos_deleted: int

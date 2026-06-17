@@ -55,6 +55,8 @@ from app.schemas import (
     CreateEventRequest,
     DeleteEventResult,
     PhotoIdsOut,
+    PhotoUploadStatusesOut,
+    PhotoUploadStatusOut,
     PhotoUploadResult,
     EventCreatedOut,
     IngestResult,
@@ -1223,6 +1225,58 @@ def get_photo_ids(event_id: int, db: Session = Depends(get_db)) -> PhotoIdsOut:
         raise HTTPException(404, "Event not found")
     ids = [row[0] for row in db.query(Photo.id).filter(Photo.event_id == event_id).all()]
     return PhotoIdsOut(photo_ids=ids)
+
+
+@router.get(
+    "/events/{event_id}/photos/upload_status",
+    response_model=PhotoUploadStatusesOut,
+    dependencies=[Depends(require_admin)],
+)
+def get_photo_upload_status(
+    event_id: int,
+    photo_ids: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> PhotoUploadStatusesOut:
+    """Return proof/original presence for event photos.
+
+    When photo_ids are supplied, every requested ID is returned, including
+    IDs with no DB record. With no filter, all DB records for the event are
+    returned.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    requested = list(dict.fromkeys(photo_ids or []))
+    query = db.query(Photo).filter(Photo.event_id == event_id)
+    if requested:
+        query = query.filter(Photo.id.in_(requested))
+    records = {photo.id: photo for photo in query.all()}
+    output_ids = requested or sorted(records)
+    storage_root = Path(settings.STORAGE_ROOT)
+
+    statuses: list[PhotoUploadStatusOut] = []
+    for photo_id in output_ids:
+        photo = records.get(photo_id)
+        proof_rel = (
+            photo.proof_path if photo is not None
+            else f"proofs/{event.slug}/{photo_id}.jpg"
+        )
+        original_rel = (
+            photo.original_path if photo is not None
+            else f"originals/{event.slug}/{photo_id}.jpg"
+        )
+        statuses.append(
+            PhotoUploadStatusOut(
+                photo_id=photo_id,
+                record_exists=photo is not None,
+                proof_file_exists=(storage_root / proof_rel).exists(),
+                original_file_exists=(storage_root / original_rel).exists(),
+                state=photo.state.value if photo is not None and photo.state else None,
+            )
+        )
+
+    return PhotoUploadStatusesOut(photos=statuses)
 
 
 @router.put(

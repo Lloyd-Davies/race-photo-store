@@ -712,6 +712,39 @@ def test_get_photo_ids_unknown_event(admin_client):
     assert resp.status_code == 404
 
 
+def test_get_photo_upload_status_all_records(admin_client, test_event, test_photos):
+    resp = admin_client.get(f"/api/admin/events/{test_event.id}/photos/upload_status")
+    assert resp.status_code == 200
+
+    photos = resp.json()["photos"]
+    assert {p["photo_id"] for p in photos} == {p.id for p in test_photos}
+    assert all(p["record_exists"] is True for p in photos)
+    assert all(p["proof_file_exists"] is True for p in photos)
+    assert all(p["original_file_exists"] is True for p in photos)
+
+
+def test_get_photo_upload_status_requested_missing_ids(admin_client, test_event, test_photos):
+    existing_id = test_photos[0].id
+    resp = admin_client.get(
+        f"/api/admin/events/{test_event.id}/photos/upload_status",
+        params=[("photo_ids", existing_id), ("photo_ids", "missing-001")],
+    )
+    assert resp.status_code == 200
+
+    by_id = {row["photo_id"]: row for row in resp.json()["photos"]}
+    assert by_id[existing_id]["record_exists"] is True
+    assert by_id[existing_id]["proof_file_exists"] is True
+    assert by_id["missing-001"]["record_exists"] is False
+    assert by_id["missing-001"]["proof_file_exists"] is False
+    assert by_id["missing-001"]["original_file_exists"] is False
+    assert by_id["missing-001"]["state"] is None
+
+
+def test_get_photo_upload_status_unknown_event(admin_client):
+    resp = admin_client.get("/api/admin/events/99999/photos/upload_status")
+    assert resp.status_code == 404
+
+
 # ── Delete event endpoint (S4) ────────────────────────────────────────────────
 
 def test_delete_event_removes_photos_and_tags(admin_client, db_session, test_event, test_photos):
