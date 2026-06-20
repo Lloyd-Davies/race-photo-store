@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -20,6 +20,15 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
 
 TERMINAL_EVENT_STATUSES = {"PROCESSED", "IGNORED"}
+
+
+def _stripe_object_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise TypeError(f"Unsupported Stripe object type: {type(value).__name__}")
 
 
 @router.post("/stripe/webhook")
@@ -70,16 +79,25 @@ async def stripe_webhook(
 
     try:
         if event_type == "checkout.session.completed":
-            communication_id, order_id = _handle_checkout_completed(event["data"]["object"], db)
+            stripe_object = _stripe_object_dict(event["data"]["object"])
+            communication_id, order_id = _handle_checkout_completed(stripe_object, db)
             stored.processing_status = "PROCESSED"
         elif event_type == "checkout.session.expired":
-            _handle_checkout_expired(event["data"]["object"], db)
+            _handle_checkout_expired(_stripe_object_dict(event["data"]["object"]), db)
             stored.processing_status = "PROCESSED"
         elif event_type in {"payment_intent.payment_failed", "charge.failed"}:
-            _handle_payment_failed(event["data"]["object"], db, event_type)
+            _handle_payment_failed(
+                _stripe_object_dict(event["data"]["object"]),
+                db,
+                event_type,
+            )
             stored.processing_status = "PROCESSED"
         elif event_type in {"charge.refunded", "refund.created", "refund.updated"}:
-            _record_refund_event(event["data"]["object"], db, event_type)
+            _record_refund_event(
+                _stripe_object_dict(event["data"]["object"]),
+                db,
+                event_type,
+            )
             stored.processing_status = "PROCESSED"
         else:
             stored.processing_status = "IGNORED"
