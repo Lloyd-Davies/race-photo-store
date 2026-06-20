@@ -106,6 +106,14 @@ def test_webhook_retries_previously_failed_stored_event(
             "payment_intent": "pi_retry_failed",
             "payment_status": "paid",
             "customer_email": order.email,
+            "currency": "gbp",
+            "amount_subtotal": 1500,
+            "amount_total": 1500,
+            "total_details": {
+                "amount_discount": 0,
+                "amount_tax": 0,
+                "amount_shipping": 0,
+            },
         }},
     }
     db_session.add(StripeEvent(
@@ -125,6 +133,8 @@ def test_webhook_retries_previously_failed_stored_event(
     assert resp.status_code == 200
     db_session.refresh(order)
     assert order.status == OrderStatus.READY
+    assert order.stripe_amount_paid_pence == 1500
+    assert order.stripe_pricing_status == "QUEUED"
     stored = db_session.query(StripeEvent).filter(
         StripeEvent.stripe_event_id == payload["id"]
     ).one()
@@ -183,6 +193,14 @@ def test_webhook_email_enqueue_failure_keeps_order_fulfilled(
             "payment_intent": "pi_queue_failure",
             "payment_status": "paid",
             "customer_email": order.email,
+            "currency": "gbp",
+            "amount_subtotal": 1500,
+            "amount_total": 1500,
+            "total_details": {
+                "amount_discount": 0,
+                "amount_tax": 0,
+                "amount_shipping": 0,
+            },
         }},
     }
 
@@ -191,6 +209,8 @@ def test_webhook_email_enqueue_failure_keeps_order_fulfilled(
     assert resp.status_code == 200
     db_session.refresh(order)
     assert order.status == OrderStatus.READY
+    assert order.stripe_amount_paid_pence == 1500
+    assert order.stripe_pricing_status == "FAILED"
     communication = db_session.query(Communication).filter(
         Communication.order_id == order.id
     ).one()
@@ -202,6 +222,92 @@ def test_webhook_email_enqueue_failure_keeps_order_fulfilled(
         OrderActivity.action == "EMAIL_QUEUE_FAILED",
     ).one()
     assert activity.metadata_json["error_type"] == "RuntimeError"
+
+
+def test_webhook_persists_authoritative_discounted_pricing(
+    client, db_session, test_photos, monkeypatch
+):
+    from photostore.config import settings
+    from photostore.models import OrderDiscount
+
+    secret = "whsec_discounted"
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", secret)
+    order = _make_order(db_session, test_photos)
+    payload = {
+        "id": "evt_discounted",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "created": int(time.time()),
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "object": "checkout.session",
+            "payment_intent": "pi_discounted",
+            "payment_status": "paid",
+            "currency": "gbp",
+            "amount_subtotal": 1500,
+            "amount_total": 1200,
+            "total_details": {
+                "amount_discount": 300,
+                "amount_tax": 0,
+                "amount_shipping": 0,
+                "breakdown": {"discounts": [{
+                    "amount": 300,
+                    "discount": {"id": "di_discounted", "promotion_code": "promo_123"},
+                }]},
+            },
+            "discounts": [{"id": "di_discounted", "promotion_code": "promo_123"}],
+        }},
+    }
+
+    resp = _post_signed_event(client, payload, secret)
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert order.stripe_amount_subtotal_pence == 1500
+    assert order.stripe_discount_pence == 300
+    assert order.stripe_amount_paid_pence == 1200
+    assert order.currency == "GBP"
+    discount = db_session.query(OrderDiscount).filter(OrderDiscount.order_id == order.id).one()
+    assert discount.stripe_promotion_code_id == "promo_123"
+    assert discount.amount_pence == 300
+
+
+def test_webhook_refund_updates_order_idempotently(
+    client, db_session, test_photos, monkeypatch
+):
+    from photostore.config import settings
+    from photostore.models import OrderRefund
+
+    secret = "whsec_refund"
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", secret)
+    order = _make_order(db_session, test_photos)
+    order.stripe_payment_intent_id = "pi_refund"
+    order.stripe_amount_paid_pence = 1500
+    db_session.commit()
+    payload = {
+        "id": "evt_refund",
+        "object": "event",
+        "type": "refund.updated",
+        "created": int(time.time()),
+        "data": {"object": {
+            "id": "re_refund",
+            "object": "refund",
+            "payment_intent": "pi_refund",
+            "amount": 500,
+            "currency": "gbp",
+            "status": "succeeded",
+            "created": int(time.time()),
+        }},
+    }
+
+    first = _post_signed_event(client, payload, secret)
+    duplicate = _post_signed_event(client, payload, secret)
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 200
+    db_session.refresh(order)
+    assert order.stripe_amount_refunded_pence == 500
+    assert db_session.query(OrderRefund).filter(OrderRefund.order_id == order.id).count() == 1
 
 
 def test_webhook_fulfills_order(client, db_session, test_photos, mock_celery_send_task, monkeypatch):

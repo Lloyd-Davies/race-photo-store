@@ -88,6 +88,14 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
 
     if unit_amount_pence == 0:
         order.stripe_session_id = f"free_{_uuid.uuid4()}"
+        order.stripe_amount_subtotal_pence = 0
+        order.stripe_discount_pence = 0
+        order.stripe_tax_pence = 0
+        order.stripe_shipping_pence = 0
+        order.stripe_amount_paid_pence = 0
+        order.stripe_amount_refunded_pence = 0
+        order.stripe_pricing_status = "SYNCED"
+        order.stripe_pricing_synced_at = datetime.now(timezone.utc)
         comm_id = mark_order_ready(order, db)
         record_order_activity(
             db,

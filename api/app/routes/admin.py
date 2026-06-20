@@ -46,9 +46,12 @@ from app.schemas import (
     AdminOperationalAlert,
     AdminOrderTimelineOut,
     AdminPhotoMetric,
+    AdminPricingCoverage,
+    AdminPromotionCodeMetric,
     AdminResetDeliveryRequest,
     AdminSessionOut,
     AdminStripeSyncOut,
+    AdminStripePricingBackfillOut,
     AdminStripeWebhookHealth,
     AdminTrendPoint,
     BibTagsRequest,
@@ -71,13 +74,19 @@ from photostore.email_provider import EmailMessage, ProviderError, get_provider
 from photostore.models import (
     Cart, Communication, CommunicationKind, CommunicationStatus,
     Delivery, DeliveryZipStatus, Event, EventStatus, Order, OrderItem, OrderStatus,
-    OrderActivity, Photo, PhotoState, PhotoTag, StripeEvent,
+    OrderActivity, OrderDiscount, OrderRefund, Photo, PhotoState, PhotoTag, StripeEvent,
 )
 from photostore.pricing import effective_photo_price_pence, get_app_settings, normalize_currency
 from photostore.storage import get_zip_storage_backend, get_zip_storage_backend_name
 from app.fulfillment import mark_order_ready
 from app.order_activity import record_order_activity
 from app.stripe_event_store import store_stripe_event
+from app.stripe_pricing_queue import enqueue_order_pricing_sync_after_commit
+from photostore.stripe_pricing import (
+    apply_checkout_session_pricing,
+    stripe_expandable_id,
+    stripe_object_dict,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -177,7 +186,7 @@ def _extract_captured_at(image_path: Path) -> datetime | None:
 
 
 def _order_subtotal_pence(order: Order) -> int:
-    return sum(max(0, item.unit_price_pence - item.discount_applied_pence) for item in order.items)
+    return sum(max(0, item.unit_price_pence) for item in order.items)
 
 
 def _event_cover_url(event: Event) -> str | None:
@@ -271,6 +280,8 @@ def _process_cover_upload(event: Event, file: UploadFile) -> tuple[str, int]:
 
 
 def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None) -> AdminOrderOut:
+    collected = order.stripe_amount_paid_pence
+    refunded = order.stripe_amount_refunded_pence or 0
     return AdminOrderOut(
         id=order.id,
         status=order.status,
@@ -279,6 +290,20 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
         paid_at=order.paid_at,
         item_count=item_count,
         subtotal_pence=_order_subtotal_pence(order),
+        stripe_subtotal_pence=order.stripe_amount_subtotal_pence,
+        discount_pence=order.stripe_discount_pence,
+        tax_pence=order.stripe_tax_pence,
+        shipping_pence=order.stripe_shipping_pence,
+        collected_pence=collected,
+        refunded_pence=refunded,
+        net_pence=max(0, collected - refunded) if collected is not None else None,
+        promotion_codes=[
+            discount.promotion_code or discount.stripe_promotion_code_id or "Coupon"
+            for discount in order.discounts
+        ],
+        stripe_pricing_status=order.stripe_pricing_status,
+        stripe_pricing_error=order.stripe_pricing_error,
+        stripe_pricing_synced_at=order.stripe_pricing_synced_at,
         currency=order.currency or "GBP",
         event_slug=delivery.event_slug if delivery else None,
         download_count=delivery.download_count if delivery else None,
@@ -296,7 +321,7 @@ def _to_admin_order_out(order: Order, item_count: int, delivery: Delivery | None
 
 
 def _line_total_pence(item: OrderItem) -> int:
-    return max(0, item.unit_price_pence - item.discount_applied_pence)
+    return max(0, item.unit_price_pence)
 
 
 def _order_item_stats_subquery(db: Session):
@@ -305,7 +330,7 @@ def _order_item_stats_subquery(db: Session):
             OrderItem.order_id,
             func.count(OrderItem.id).label("item_count"),
             func.coalesce(
-                func.sum(func.greatest(0, OrderItem.unit_price_pence - OrderItem.discount_applied_pence)),
+                func.sum(func.greatest(0, OrderItem.unit_price_pence)),
                 0,
             ).label("subtotal_pence"),
         )
@@ -339,7 +364,7 @@ def _admin_order_query(
         db.query(Order, Delivery, item_stats.c.item_count, item_stats.c.subtotal_pence)
         .outerjoin(Delivery, Delivery.order_id == Order.id)
         .outerjoin(item_stats, item_stats.c.order_id == Order.id)
-        .options(joinedload(Order.items))
+        .options(joinedload(Order.items), joinedload(Order.discounts))
     )
 
     if status:
@@ -392,6 +417,7 @@ def _money_groups() -> defaultdict[str, dict[str, int]]:
             "paid_revenue_pence": 0,
             "pending_value_pence": 0,
             "discount_pence": 0,
+            "refunded_pence": 0,
             "paid_order_count": 0,
             "free_order_count": 0,
         }
@@ -410,6 +436,8 @@ def _money_metric_list(groups: dict[str, dict[str, int]]) -> list[AdminMoneyMetr
                 paid_revenue_pence=paid_revenue,
                 pending_value_pence=values.get("pending_value_pence", 0),
                 discount_pence=values.get("discount_pence", 0),
+                refunded_pence=values.get("refunded_pence", 0),
+                net_revenue_pence=paid_revenue - values.get("refunded_pence", 0),
                 paid_order_count=paid_count,
                 free_order_count=values.get("free_order_count", 0),
                 average_order_value_pence=int(paid_revenue / paid_count) if paid_count else 0,
@@ -666,7 +694,7 @@ def _stripe_session_dict(session) -> dict:
     if isinstance(session, dict):
         return session
     try:
-        as_dict = dict(session)
+        as_dict = stripe_object_dict(session)
         if as_dict:
             return as_dict
     except Exception:
@@ -692,12 +720,16 @@ def _apply_stripe_session_to_order(
     changed = False
     communication_id = None
 
+    if apply_checkout_session_pricing(order, session, db):
+        order.stripe_pricing_status = "QUEUED"
+        changed = True
+
     if payment_status == "paid" or status == "complete":
         if order.status == OrderStatus.PENDING:
             communication_id = mark_order_ready(
                 order,
                 db,
-                payment_intent_id=session.get("payment_intent"),
+                payment_intent_id=stripe_expandable_id(session.get("payment_intent")),
                 customer_email=session.get("customer_email"),
                 initiated_by=actor,
             )
@@ -943,6 +975,24 @@ def get_admin_metrics(
     customer_totals: dict[str, dict] = {}
     event_totals: dict[str, dict] = {}
     photo_totals: dict[str, dict] = {}
+    promotion_totals: dict[str, dict] = {}
+
+    refunds_query = (
+        db.query(OrderRefund)
+        .join(Order, Order.id == OrderRefund.order_id)
+        .filter(
+            OrderRefund.status == "succeeded",
+            OrderRefund.stripe_created_at <= now,
+        )
+    )
+    if start_at is not None:
+        refunds_query = refunds_query.filter(OrderRefund.stripe_created_at >= start_at)
+    if event_id is not None:
+        refunds_query = refunds_query.filter(OrderRefund.order_id.in_(_event_order_ids(db, event_id)))
+    refunds_in_range = refunds_query.all()
+    refunds_by_order: dict[int, int] = defaultdict(int)
+    for refund in refunds_in_range:
+        refunds_by_order[refund.order_id] += refund.amount_pence
 
     for order in created_orders:
         subtotal = _order_subtotal_pence(order)
@@ -960,24 +1010,32 @@ def get_admin_metrics(
         daily[day_key].item_count += len(order.items)
 
     for order in paid_orders:
-        subtotal = _order_subtotal_pence(order)
-        discount = sum(max(0, item.discount_applied_pence) for item in order.items)
+        catalogue_subtotal = _order_subtotal_pence(order)
+        gross = (
+            order.stripe_amount_subtotal_pence
+            if order.stripe_amount_subtotal_pence is not None
+            else catalogue_subtotal
+        )
+        discount = order.stripe_discount_pence or 0
+        collected = order.stripe_amount_paid_pence
         currency = _order_currency(order)
         group = money[currency]
-        group["gross_sales_pence"] += subtotal
-        group["paid_revenue_pence"] += subtotal
+        group["gross_sales_pence"] += gross
         group["discount_pence"] += discount
-        group["paid_order_count"] += 1
-        if subtotal == 0:
-            group["free_order_count"] += 1
+        if collected is not None:
+            group["paid_revenue_pence"] += collected
+            group["paid_order_count"] += 1
+            if collected == 0:
+                group["free_order_count"] += 1
 
         paid_day = (order.paid_at or order.created_at).date().isoformat()
         if paid_day not in daily:
             daily[paid_day] = AdminTrendPoint(date=paid_day)
         daily[paid_day].paid_order_count += 1
-        daily[paid_day].revenue_by_currency[currency] = (
-            daily[paid_day].revenue_by_currency.get(currency, 0) + subtotal
-        )
+        if collected is not None:
+            daily[paid_day].revenue_by_currency[currency] = (
+                daily[paid_day].revenue_by_currency.get(currency, 0) + collected
+            )
 
         email = (order.email or "").strip().lower()
         if email:
@@ -994,9 +1052,10 @@ def get_admin_metrics(
                 customer_totals[email]["last_order_at"],
                 order.paid_at or order.created_at,
             )
-            customer_totals[email]["money"][currency]["gross_sales_pence"] += subtotal
-            customer_totals[email]["money"][currency]["paid_revenue_pence"] += subtotal
-            customer_totals[email]["money"][currency]["paid_order_count"] += 1
+            customer_totals[email]["money"][currency]["gross_sales_pence"] += gross
+            if collected is not None:
+                customer_totals[email]["money"][currency]["paid_revenue_pence"] += collected
+                customer_totals[email]["money"][currency]["paid_order_count"] += 1
 
         first_photo = order.items[0].photo if order.items and order.items[0].photo else None
         event = first_photo.event if first_photo else None
@@ -1015,9 +1074,10 @@ def get_admin_metrics(
         event_totals[event_key]["order_count"] += 1
         event_totals[event_key]["paid_order_count"] += 1
         event_totals[event_key]["item_count"] += len(order.items)
-        event_totals[event_key]["money"][currency]["gross_sales_pence"] += subtotal
-        event_totals[event_key]["money"][currency]["paid_revenue_pence"] += subtotal
-        event_totals[event_key]["money"][currency]["paid_order_count"] += 1
+        event_totals[event_key]["money"][currency]["gross_sales_pence"] += gross
+        if collected is not None:
+            event_totals[event_key]["money"][currency]["paid_revenue_pence"] += collected
+            event_totals[event_key]["money"][currency]["paid_order_count"] += 1
 
         for item in order.items:
             photo = item.photo
@@ -1037,6 +1097,56 @@ def get_admin_metrics(
             photo_totals[item.photo_id]["money"][currency]["gross_sales_pence"] += line_total
             photo_totals[item.photo_id]["money"][currency]["paid_revenue_pence"] += line_total
             photo_totals[item.photo_id]["money"][currency]["paid_order_count"] += 1
+
+        for order_discount in order.discounts:
+            code = (
+                order_discount.promotion_code
+                or order_discount.stripe_promotion_code_id
+                or order_discount.stripe_coupon_id
+                or "Coupon"
+            )
+            if code not in promotion_totals:
+                promotion_totals[code] = {
+                    "promotion_code": code,
+                    "promotion_code_id": order_discount.stripe_promotion_code_id,
+                    "order_ids": set(),
+                    "customers": set(),
+                    "money": _money_groups(),
+                }
+            promo = promotion_totals[code]
+            if order.id not in promo["order_ids"]:
+                promo["order_ids"].add(order.id)
+                if email:
+                    promo["customers"].add(email)
+                promo_money = promo["money"][currency]
+                promo_money["gross_sales_pence"] += gross
+                promo_money["discount_pence"] += order_discount.amount_pence or 0
+                if collected is not None:
+                    promo_money["paid_revenue_pence"] += collected
+                    promo_money["paid_order_count"] += 1
+
+    for refund in refunds_in_range:
+        currency = (refund.currency or "GBP").upper()
+        money[currency]["refunded_pence"] += refund.amount_pence
+        refund_day = (refund.stripe_created_at or refund.created_at).date().isoformat()
+        if refund_day not in daily:
+            daily[refund_day] = AdminTrendPoint(date=refund_day)
+        daily[refund_day].refunded_by_currency[currency] = (
+            daily[refund_day].refunded_by_currency.get(currency, 0) + refund.amount_pence
+        )
+
+    for row in daily.values():
+        currencies = set(row.revenue_by_currency) | set(row.refunded_by_currency)
+        row.net_revenue_by_currency = {
+            code: row.revenue_by_currency.get(code, 0) - row.refunded_by_currency.get(code, 0)
+            for code in currencies
+        }
+
+    for promo in promotion_totals.values():
+        for order_id in promo["order_ids"]:
+            order = next((candidate for candidate in paid_orders if candidate.id == order_id), None)
+            if order and refunds_by_order.get(order_id):
+                promo["money"][_order_currency(order)]["refunded_pence"] += refunds_by_order[order_id]
 
     delivery_counts: dict[str, int] = defaultdict(int)
     for order in created_orders:
@@ -1097,13 +1207,29 @@ def get_admin_metrics(
         pending_orders=sum(1 for order in created_orders if order.status == OrderStatus.PENDING),
         failed_orders=sum(1 for order in created_orders if order.status == OrderStatus.FAILED),
         ready_orders=sum(1 for order in created_orders if order.status == OrderStatus.READY),
-        free_orders=sum(1 for order in paid_orders if _order_subtotal_pence(order) == 0),
+        free_orders=sum(1 for order in paid_orders if order.stripe_amount_paid_pence == 0),
         items_sold=sum(len(order.items) for order in paid_orders),
         unique_customers=len(paid_customer_counts),
         repeat_customers=sum(1 for count in paid_customer_counts.values() if count > 1),
         average_items_per_order=(
             round(sum(len(order.items) for order in paid_orders) / len(paid_orders), 2)
             if paid_orders else 0
+        ),
+        discounted_orders=sum(
+            1 for order in paid_orders if (order.stripe_discount_pence or 0) > 0
+        ),
+        refunded_orders=len({refund.order_id for refund in refunds_in_range}),
+    )
+
+    authoritative_orders = sum(
+        1 for order in paid_orders if order.stripe_amount_paid_pence is not None
+    )
+    pricing_coverage = AdminPricingCoverage(
+        paid_orders=len(paid_orders),
+        authoritative_orders=authoritative_orders,
+        unsynced_orders=len(paid_orders) - authoritative_orders,
+        failed_orders=sum(
+            1 for order in paid_orders if order.stripe_pricing_status == "FAILED"
         ),
     )
 
@@ -1182,6 +1308,21 @@ def get_admin_metrics(
         alerts=alerts,
         recent_activity=recent_activity,
         stripe_webhook_health=stripe_webhook_health,
+        pricing_coverage=pricing_coverage,
+        promotion_codes=[
+            AdminPromotionCodeMetric(
+                promotion_code=values["promotion_code"],
+                promotion_code_id=values["promotion_code_id"],
+                order_count=len(values["order_ids"]),
+                unique_customers=len(values["customers"]),
+                money=_money_metric_list(values["money"]),
+            )
+            for values in sorted(
+                promotion_totals.values(),
+                key=lambda row: len(row["order_ids"]),
+                reverse=True,
+            )
+        ],
     )
 
 
@@ -1798,6 +1939,15 @@ def export_orders(
         "paid_at",
         "item_count",
         "subtotal_pence",
+        "stripe_subtotal_pence",
+        "discount_pence",
+        "tax_pence",
+        "shipping_pence",
+        "collected_pence",
+        "refunded_pence",
+        "net_pence",
+        "promotion_codes",
+        "stripe_pricing_status",
         "currency",
         "download_count",
         "max_downloads",
@@ -1816,6 +1966,21 @@ def export_orders(
             order.paid_at.isoformat() if order.paid_at else "",
             int(item_count or 0),
             _order_subtotal_pence(order),
+            order.stripe_amount_subtotal_pence if order.stripe_amount_subtotal_pence is not None else "",
+            order.stripe_discount_pence if order.stripe_discount_pence is not None else "",
+            order.stripe_tax_pence if order.stripe_tax_pence is not None else "",
+            order.stripe_shipping_pence if order.stripe_shipping_pence is not None else "",
+            order.stripe_amount_paid_pence if order.stripe_amount_paid_pence is not None else "",
+            order.stripe_amount_refunded_pence or 0,
+            (
+                max(0, order.stripe_amount_paid_pence - (order.stripe_amount_refunded_pence or 0))
+                if order.stripe_amount_paid_pence is not None else ""
+            ),
+            "|".join(
+                discount.promotion_code or discount.stripe_promotion_code_id or "Coupon"
+                for discount in order.discounts
+            ),
+            order.stripe_pricing_status,
             _order_currency(order),
             delivery.download_count if delivery else "",
             delivery.max_downloads if delivery else "",
@@ -1835,7 +2000,7 @@ def export_orders(
 def get_order_detail(order_id: int, db: Session = Depends(get_db)) -> AdminOrderDetailOut:
     order = (
         db.query(Order)
-        .options(joinedload(Order.items))
+        .options(joinedload(Order.items), joinedload(Order.discounts))
         .filter(Order.id == order_id)
         .first()
     )
@@ -2171,6 +2336,8 @@ def sync_order_with_stripe(order_id: int, db: Session = Depends(get_db)) -> Admi
             order_id=order.id,
             actor="admin",
         )
+    if order.stripe_pricing_status == "QUEUED":
+        enqueue_order_pricing_sync_after_commit(db, order_id=order.id, actor="admin")
 
     return AdminStripeSyncOut(
         order_id=order.id,
@@ -2217,6 +2384,7 @@ def reconcile_stale_stripe_orders(
     updated = 0
     failures = 0
     communications_to_enqueue: list[tuple[int, int]] = []
+    pricing_orders_to_enqueue: list[int] = []
     for order in orders:
         checked += 1
         try:
@@ -2238,6 +2406,8 @@ def reconcile_stale_stripe_orders(
                 updated += 1
             if communication_id:
                 communications_to_enqueue.append((communication_id, order.id))
+            if order.stripe_pricing_status == "QUEUED":
+                pricing_orders_to_enqueue.append(order.id)
         except Exception as exc:
             failures += 1
             record_order_activity(
@@ -2257,11 +2427,74 @@ def reconcile_stale_stripe_orders(
             order_id=order_id,
             actor="admin",
         )
+    for order_id in pricing_orders_to_enqueue:
+        enqueue_order_pricing_sync_after_commit(db, order_id=order_id, actor="admin")
     return AdminStripeSyncOut(
         status="completed" if failures == 0 else "partial",
         message=f"Checked {checked} stale pending order(s); updated {updated}; failures {failures}.",
         orders_checked=checked,
         orders_updated=updated,
+    )
+
+
+@router.post(
+    "/stripe/pricing-sync",
+    response_model=AdminStripePricingBackfillOut,
+    dependencies=[Depends(require_admin)],
+)
+def queue_stripe_pricing_backfill(
+    scope: str = Query(default="missing", pattern="^(missing|all)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> AdminStripePricingBackfillOut:
+    if not settings.STRIPE_SECRET_KEY:
+        return AdminStripePricingBackfillOut(
+            status="unconfigured",
+            message="Stripe is not configured on this server",
+        )
+
+    base_query = db.query(Order).filter(
+        Order.paid_at.isnot(None),
+        ~Order.stripe_session_id.startswith("pending_"),
+        ~Order.stripe_session_id.startswith("free_"),
+    )
+    if scope == "missing":
+        base_query = base_query.filter(
+            or_(
+                Order.stripe_amount_paid_pence.is_(None),
+                Order.stripe_pricing_status.in_(["UNSYNCED", "FAILED", "PARTIAL"]),
+            ),
+            Order.stripe_pricing_status != "QUEUED",
+        )
+
+    orders = base_query.order_by(Order.id.asc()).limit(limit).all()
+    for order in orders:
+        order.stripe_pricing_status = "QUEUED"
+        order.stripe_pricing_error = None
+    db.commit()
+
+    queue_failures = 0
+    for order in orders:
+        if not enqueue_order_pricing_sync_after_commit(db, order_id=order.id, actor="admin"):
+            queue_failures += 1
+
+    remaining_query = db.query(Order).filter(
+        Order.paid_at.isnot(None),
+        ~Order.stripe_session_id.startswith("pending_"),
+        ~Order.stripe_session_id.startswith("free_"),
+        or_(
+            Order.stripe_amount_paid_pence.is_(None),
+            Order.stripe_pricing_status.in_(["UNSYNCED", "FAILED", "PARTIAL"]),
+        ),
+    )
+    remaining = remaining_query.count()
+    queued = len(orders) - queue_failures
+    return AdminStripePricingBackfillOut(
+        status="queued" if queue_failures == 0 else "partial",
+        message=f"Queued {queued} order(s) for Stripe pricing synchronization.",
+        orders_queued=queued,
+        orders_remaining=remaining,
+        queue_failures=queue_failures,
     )
 
 

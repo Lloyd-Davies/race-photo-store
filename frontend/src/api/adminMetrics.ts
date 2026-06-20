@@ -6,6 +6,8 @@ export interface AdminMoneyMetric {
   paid_revenue_pence: number
   pending_value_pence: number
   discount_pence: number
+  refunded_pence: number
+  net_revenue_pence: number
   paid_order_count: number
   free_order_count: number
   average_order_value_pence: number
@@ -24,6 +26,23 @@ export interface AdminTrendPoint {
   paid_order_count: number
   item_count: number
   revenue_by_currency: Record<string, number>
+  refunded_by_currency: Record<string, number>
+  net_revenue_by_currency: Record<string, number>
+}
+
+export interface AdminPromotionCodeMetric {
+  promotion_code: string
+  promotion_code_id?: string
+  order_count: number
+  unique_customers: number
+  money: AdminMoneyMetric[]
+}
+
+export interface AdminPricingCoverage {
+  paid_orders: number
+  authoritative_orders: number
+  unsynced_orders: number
+  failed_orders: number
 }
 
 export interface AdminEventMetric {
@@ -84,6 +103,8 @@ export interface AdminMetricsTotals {
   unique_customers: number
   repeat_customers: number
   average_items_per_order: number
+  discounted_orders: number
+  refunded_orders: number
 }
 
 export interface AdminStripeWebhookHealth {
@@ -114,6 +135,8 @@ export interface AdminMetrics {
   alerts: AdminOperationalAlert[]
   recent_activity: AdminActivity[]
   stripe_webhook_health: AdminStripeWebhookHealth
+  pricing_coverage: AdminPricingCoverage
+  promotion_codes: AdminPromotionCodeMetric[]
 }
 
 export type AdminMetricsRange = '7d' | '30d' | '90d' | '365d' | 'all'

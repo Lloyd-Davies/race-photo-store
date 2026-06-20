@@ -139,6 +139,15 @@ class Order(Base):
     email = Column(String, nullable=False)
     status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.PENDING)
     currency = Column(String, nullable=False, default="GBP")
+    stripe_amount_subtotal_pence = Column(Integer)
+    stripe_discount_pence = Column(Integer)
+    stripe_tax_pence = Column(Integer)
+    stripe_shipping_pence = Column(Integer)
+    stripe_amount_paid_pence = Column(Integer)
+    stripe_amount_refunded_pence = Column(Integer, nullable=False, default=0)
+    stripe_pricing_status = Column(String, nullable=False, default="UNSYNCED")
+    stripe_pricing_error = Column(String)
+    stripe_pricing_synced_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     paid_at = Column(DateTime(timezone=True))
 
@@ -147,6 +156,8 @@ class Order(Base):
     communications = relationship("Communication", back_populates="order")
     activities = relationship("OrderActivity", back_populates="order")
     stripe_events = relationship("StripeEvent", back_populates="order")
+    discounts = relationship("OrderDiscount", back_populates="order", cascade="all, delete-orphan")
+    refunds = relationship("OrderRefund", back_populates="order", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
@@ -160,6 +171,44 @@ class OrderItem(Base):
 
     order = relationship("Order", back_populates="items")
     photo = relationship("Photo")
+
+
+class OrderDiscount(Base):
+    __tablename__ = "order_discounts"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    stripe_discount_id = Column(String, index=True)
+    stripe_promotion_code_id = Column(String, index=True)
+    promotion_code = Column(String, index=True)
+    stripe_coupon_id = Column(String)
+    amount_pence = Column(Integer)
+    currency = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    order = relationship("Order", back_populates="discounts")
+
+    __table_args__ = (
+        UniqueConstraint("order_id", "stripe_discount_id", name="uq_order_discounts_order_stripe_id"),
+    )
+
+
+class OrderRefund(Base):
+    __tablename__ = "order_refunds"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    stripe_refund_id = Column(String, unique=True, nullable=False, index=True)
+    amount_pence = Column(Integer, nullable=False)
+    currency = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    reason = Column(String)
+    stripe_created_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    order = relationship("Order", back_populates="refunds")
 
 
 class Delivery(Base):

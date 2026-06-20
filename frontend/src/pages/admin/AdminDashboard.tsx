@@ -7,10 +7,11 @@ import {
   RefreshCw,
   TrendingUp,
   Users,
-  ShoppingCart,
   Images,
   ReceiptText,
   Webhook,
+  BadgePercent,
+  CircleDollarSign,
 } from 'lucide-react'
 import {
   Bar,
@@ -35,7 +36,7 @@ import {
   type AdminMetricsRange,
   type AdminMoneyMetric,
 } from '../../api/adminMetrics'
-import { reconcileAdminStripeOrders } from '../../api/adminOrders'
+import { reconcileAdminStripeOrders, syncAdminStripePricing } from '../../api/adminOrders'
 import { formatMoney } from '../../utils/money'
 
 const RANGES: Array<{ value: AdminMetricsRange; label: string }> = [
@@ -57,6 +58,7 @@ function primaryCurrency(metrics?: AdminMetrics) {
 }
 
 function formatMetricMoney(metrics: AdminMetrics | undefined, key: keyof AdminMoneyMetric) {
+  if ((metrics?.money.length ?? 0) > 1) return 'Mixed'
   const currency = primaryCurrency(metrics)
   return formatMoney(moneySum(metrics?.money ?? [], key), currency)
 }
@@ -129,8 +131,11 @@ function MoneyTable({ metrics }: { metrics: AdminMetrics }) {
             <tr>
               <th className="py-2 pr-3 font-medium">Currency</th>
               <th className="py-2 pr-3 font-medium">Gross</th>
+              <th className="py-2 pr-3 font-medium">Collected</th>
               <th className="py-2 pr-3 font-medium">Pending</th>
               <th className="py-2 pr-3 font-medium">Discount</th>
+              <th className="py-2 pr-3 font-medium">Refunded</th>
+              <th className="py-2 pr-3 font-medium">Net</th>
               <th className="py-2 pr-3 font-medium">AOV</th>
             </tr>
           </thead>
@@ -139,8 +144,11 @@ function MoneyTable({ metrics }: { metrics: AdminMetrics }) {
               <tr key={row.currency}>
                 <td className="py-2 pr-3 font-medium text-content">{row.currency}</td>
                 <td className="py-2 pr-3 text-content">{formatMoney(row.gross_sales_pence, row.currency)}</td>
+                <td className="py-2 pr-3 text-content">{formatMoney(row.paid_revenue_pence, row.currency)}</td>
                 <td className="py-2 pr-3 text-content-muted">{formatMoney(row.pending_value_pence, row.currency)}</td>
                 <td className="py-2 pr-3 text-content-muted">{formatMoney(row.discount_pence, row.currency)}</td>
+                <td className="py-2 pr-3 text-content-muted">{formatMoney(row.refunded_pence, row.currency)}</td>
+                <td className="py-2 pr-3 text-content">{formatMoney(row.net_revenue_pence, row.currency)}</td>
                 <td className="py-2 pr-3 text-content-muted">{formatMoney(row.average_order_value_pence, row.currency)}</td>
               </tr>
             ))}
@@ -175,6 +183,14 @@ export default function AdminDashboard() {
     },
   })
 
+  const pricingSyncMut = useMutation({
+    mutationFn: () => syncAdminStripePricing({ scope: 'missing', limit: 100 }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-metrics'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-orders'] })
+    },
+  })
+
   const metrics = metricsQuery.data
   const currency = primaryCurrency(metrics)
 
@@ -185,7 +201,9 @@ export default function AdminDashboard() {
         orders: row.order_count,
         paid: row.paid_order_count,
         items: row.item_count,
-        revenue: (row.revenue_by_currency[currency] ?? 0) / 100,
+        collected: (row.revenue_by_currency[currency] ?? 0) / 100,
+        refunded: (row.refunded_by_currency[currency] ?? 0) / 100,
+        net: (row.net_revenue_by_currency[currency] ?? 0) / 100,
       })),
     [metrics?.daily_trends, currency],
   )
@@ -247,6 +265,15 @@ export default function AdminDashboard() {
             <RefreshCw size={14} className="mr-1" />
             Reconcile Stripe
           </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => pricingSyncMut.mutate()}
+            loading={pricingSyncMut.isPending}
+          >
+            <BadgePercent size={14} className="mr-1" />
+            Sync pricing
+          </Button>
         </div>
       </div>
 
@@ -260,6 +287,11 @@ export default function AdminDashboard() {
           {reconcileMut.data.message}
         </p>
       )}
+      {pricingSyncMut.data && (
+        <p className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-300">
+          {pricingSyncMut.data.message} {pricingSyncMut.data.orders_remaining} remain unsynced.
+        </p>
+      )}
 
       {metrics && (
         <>
@@ -267,6 +299,17 @@ export default function AdminDashboard() {
             <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
               Mixed currencies are present. Monetary totals are grouped by currency.
             </p>
+          )}
+          {metrics.pricing_coverage.unsynced_orders > 0 && (
+            <div className="flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {metrics.pricing_coverage.unsynced_orders} paid order(s) are excluded from collected revenue until Stripe pricing is synchronized.
+              </span>
+              <Button size="sm" variant="secondary" onClick={() => pricingSyncMut.mutate()} loading={pricingSyncMut.isPending}>
+                <RefreshCw size={14} className="mr-1" />
+                Sync missing
+              </Button>
+            </div>
           )}
 
           <Panel>
@@ -307,13 +350,15 @@ export default function AdminDashboard() {
             </div>
           </Panel>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-            <Kpi label="Gross sales" value={formatMetricMoney(metrics, 'gross_sales_pence')} icon={<TrendingUp size={16} />} />
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
+            <Kpi label="Collected revenue" value={formatMetricMoney(metrics, 'paid_revenue_pence')} icon={<CircleDollarSign size={16} />} />
+            <Kpi label="Net revenue" value={formatMetricMoney(metrics, 'net_revenue_pence')} icon={<TrendingUp size={16} />} />
+            <Kpi label="Gross before discount" value={formatMetricMoney(metrics, 'gross_sales_pence')} icon={<ReceiptText size={16} />} />
+            <Kpi label="Discounts" value={formatMetricMoney(metrics, 'discount_pence')} icon={<BadgePercent size={16} />} />
+            <Kpi label="Refunded" value={formatMetricMoney(metrics, 'refunded_pence')} icon={<RefreshCw size={16} />} />
             <Kpi label="Paid orders" value={metrics.totals.paid_orders} icon={<ReceiptText size={16} />} />
-            <Kpi label="Pending value" value={formatMetricMoney(metrics, 'pending_value_pence')} icon={<ShoppingCart size={16} />} />
             <Kpi label="Items sold" value={metrics.totals.items_sold} icon={<Images size={16} />} />
-            <Kpi label="Customers" value={metrics.totals.unique_customers} icon={<Users size={16} />} />
-            <Kpi label="Repeat customers" value={metrics.totals.repeat_customers} icon={<Users size={16} />} />
+            <Kpi label="Discounted orders" value={metrics.totals.discounted_orders} icon={<Users size={16} />} />
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
@@ -328,12 +373,14 @@ export default function AdminDashboard() {
                     <YAxis yAxisId="right" orientation="right" tick={{ fill: 'rgb(156, 163, 175)', fontSize: 12 }} />
                     <Tooltip
                       contentStyle={{ background: 'rgb(17, 24, 39)', border: '1px solid rgb(55, 65, 81)', borderRadius: 8 }}
-                      formatter={(value, name) => (name === 'revenue' ? [formatMoney(Number(value) * 100, currency), 'Revenue'] : [value, name])}
+                      formatter={(value, name) => (['collected', 'refunded', 'net'].includes(String(name)) ? [formatMoney(Number(value) * 100, currency), name] : [value, name])}
                     />
                     <Legend />
                     <Line yAxisId="left" type="monotone" dataKey="orders" stroke="#38bdf8" strokeWidth={2} dot={false} />
                     <Line yAxisId="left" type="monotone" dataKey="paid" stroke="#22c55e" strokeWidth={2} dot={false} />
-                    <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                    <Line yAxisId="right" type="monotone" dataKey="collected" stroke="#22c55e" strokeWidth={2} dot={false} />
+                    <Line yAxisId="right" type="monotone" dataKey="refunded" stroke="#ef4444" strokeWidth={2} dot={false} />
+                    <Line yAxisId="right" type="monotone" dataKey="net" stroke="#f59e0b" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -464,6 +511,46 @@ export default function AdminDashboard() {
               </div>
             </Panel>
           </div>
+
+          <Panel>
+            <SectionTitle title="Promotion codes" action={<BadgePercent size={16} className="text-content-muted" />} />
+            {metrics.promotion_codes.length === 0 ? (
+              <p className="text-sm text-content-muted">No promotion-code usage in this range.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="border-b border-surface-700 text-xs text-content-muted">
+                    <tr>
+                      <th className="py-2 pr-3 font-medium">Code</th>
+                      <th className="py-2 pr-3 font-medium">Uses</th>
+                      <th className="py-2 pr-3 font-medium">Customers</th>
+                      <th className="py-2 pr-3 font-medium">Currency</th>
+                      <th className="py-2 pr-3 font-medium">Gross</th>
+                      <th className="py-2 pr-3 font-medium">Discount</th>
+                      <th className="py-2 pr-3 font-medium">Collected</th>
+                      <th className="py-2 pr-3 font-medium">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-700">
+                    {metrics.promotion_codes.flatMap((promotion) =>
+                      promotion.money.map((row) => (
+                        <tr key={`${promotion.promotion_code}-${row.currency}`}>
+                          <td className="py-2 pr-3 font-mono font-medium text-content">{promotion.promotion_code}</td>
+                          <td className="py-2 pr-3 text-content">{promotion.order_count}</td>
+                          <td className="py-2 pr-3 text-content-muted">{promotion.unique_customers}</td>
+                          <td className="py-2 pr-3 text-content-muted">{row.currency}</td>
+                          <td className="py-2 pr-3 text-content-muted">{formatMoney(row.gross_sales_pence, row.currency)}</td>
+                          <td className="py-2 pr-3 text-content-muted">{formatMoney(row.discount_pence, row.currency)}</td>
+                          <td className="py-2 pr-3 text-content">{formatMoney(row.paid_revenue_pence, row.currency)}</td>
+                          <td className="py-2 pr-3 text-content">{formatMoney(row.net_revenue_pence, row.currency)}</td>
+                        </tr>
+                      )),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
 
           <Panel>
             <SectionTitle title="Recent activity" />

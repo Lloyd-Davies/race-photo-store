@@ -108,6 +108,7 @@ services:
       EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Race Photos}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       CELERY_CONCURRENCY: "2"
     volumes:
       - /mnt/pstore/photos:/data/photos

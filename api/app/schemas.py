@@ -253,6 +253,17 @@ class AdminOrderOut(BaseModel):
     paid_at: Optional[datetime] = None
     item_count: int
     subtotal_pence: int = 0
+    stripe_subtotal_pence: Optional[int] = None
+    discount_pence: Optional[int] = None
+    tax_pence: Optional[int] = None
+    shipping_pence: Optional[int] = None
+    collected_pence: Optional[int] = None
+    refunded_pence: int = 0
+    net_pence: Optional[int] = None
+    promotion_codes: list[str] = Field(default_factory=list)
+    stripe_pricing_status: str = "UNSYNCED"
+    stripe_pricing_error: Optional[str] = None
+    stripe_pricing_synced_at: Optional[datetime] = None
     currency: str = "GBP"
     event_slug: Optional[str] = None
     download_count: Optional[int] = None
@@ -304,6 +315,8 @@ class AdminMoneyMetric(BaseModel):
     paid_revenue_pence: int = 0
     pending_value_pence: int = 0
     discount_pence: int = 0
+    refunded_pence: int = 0
+    net_revenue_pence: int = 0
     paid_order_count: int = 0
     free_order_count: int = 0
     average_order_value_pence: int = 0
@@ -322,6 +335,23 @@ class AdminTrendPoint(BaseModel):
     paid_order_count: int = 0
     item_count: int = 0
     revenue_by_currency: dict[str, int] = Field(default_factory=dict)
+    refunded_by_currency: dict[str, int] = Field(default_factory=dict)
+    net_revenue_by_currency: dict[str, int] = Field(default_factory=dict)
+
+
+class AdminPromotionCodeMetric(BaseModel):
+    promotion_code: str
+    promotion_code_id: Optional[str] = None
+    order_count: int = 0
+    unique_customers: int = 0
+    money: list[AdminMoneyMetric] = Field(default_factory=list)
+
+
+class AdminPricingCoverage(BaseModel):
+    paid_orders: int = 0
+    authoritative_orders: int = 0
+    unsynced_orders: int = 0
+    failed_orders: int = 0
 
 
 class AdminEventMetric(BaseModel):
@@ -382,6 +412,8 @@ class AdminMetricsTotals(BaseModel):
     unique_customers: int = 0
     repeat_customers: int = 0
     average_items_per_order: float = 0
+    discounted_orders: int = 0
+    refunded_orders: int = 0
 
 
 class AdminStripeWebhookHealth(BaseModel):
@@ -412,6 +444,8 @@ class AdminMetricsOut(BaseModel):
     alerts: list[AdminOperationalAlert] = Field(default_factory=list)
     recent_activity: list[AdminActivityOut] = Field(default_factory=list)
     stripe_webhook_health: AdminStripeWebhookHealth
+    pricing_coverage: AdminPricingCoverage
+    promotion_codes: list[AdminPromotionCodeMetric] = Field(default_factory=list)
 
 
 class AdminOrderTimelineOut(BaseModel):
@@ -424,6 +458,14 @@ class AdminStripeSyncOut(BaseModel):
     message: str
     orders_checked: int = 0
     orders_updated: int = 0
+
+
+class AdminStripePricingBackfillOut(BaseModel):
+    status: str
+    message: str
+    orders_queued: int = 0
+    orders_remaining: int = 0
+    queue_failures: int = 0
 
 
 class AdminLoginRequest(BaseModel):

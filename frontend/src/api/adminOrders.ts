@@ -11,6 +11,17 @@ export interface AdminOrder {
   paid_at?: string
   item_count: number
   subtotal_pence: number
+  stripe_subtotal_pence?: number
+  discount_pence?: number
+  tax_pence?: number
+  shipping_pence?: number
+  collected_pence?: number
+  refunded_pence: number
+  net_pence?: number
+  promotion_codes: string[]
+  stripe_pricing_status: string
+  stripe_pricing_error?: string
+  stripe_pricing_synced_at?: string
   currency: string
   event_slug?: string
   download_count?: number
@@ -102,6 +113,14 @@ export interface AdminStripeSyncResult {
   orders_updated: number
 }
 
+export interface AdminStripePricingBackfillResult {
+  status: string
+  message: string
+  orders_queued: number
+  orders_remaining: number
+  queue_failures: number
+}
+
 const appendOrderQuery = (query: URLSearchParams, params?: AdminOrderQuery) => {
   if (!params) return
   if (params.status && params.status !== 'ALL') query.set('status', params.status)
@@ -158,6 +177,14 @@ export const reconcileAdminStripeOrders = (params?: { older_than_minutes?: numbe
   if (params?.limit) query.set('limit', String(params.limit))
   const qs = query.toString()
   return apiPost<AdminStripeSyncResult>(`/admin/stripe/reconcile${qs ? `?${qs}` : ''}`)
+}
+
+export const syncAdminStripePricing = (params?: { scope?: 'missing' | 'all'; limit?: number }) => {
+  const query = new URLSearchParams()
+  if (params?.scope) query.set('scope', params.scope)
+  if (params?.limit) query.set('limit', String(params.limit))
+  const qs = query.toString()
+  return apiPost<AdminStripePricingBackfillResult>(`/admin/stripe/pricing-sync${qs ? `?${qs}` : ''}`)
 }
 
 export const exportAdminOrders = (params?: AdminOrderQuery) => {

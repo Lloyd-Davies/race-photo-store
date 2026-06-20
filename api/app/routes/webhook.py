@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -11,8 +11,16 @@ from app.fulfillment import mark_order_ready
 from app.order_activity import record_order_activity
 from app.rate_limit import enforce_rate_limit
 from app.stripe_event_store import store_stripe_event
+from app.stripe_pricing_queue import enqueue_order_pricing_sync_after_commit
 from photostore.config import settings
 from photostore.models import Order, OrderStatus, StripeEvent
+from photostore.stripe_pricing import (
+    apply_charge_refunds,
+    apply_checkout_session_pricing,
+    apply_refund,
+    stripe_expandable_id,
+    stripe_object_dict,
+)
 
 router = APIRouter(prefix="/api", tags=["stripe"])
 
@@ -20,15 +28,6 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
 
 TERMINAL_EVENT_STATUSES = {"PROCESSED", "IGNORED"}
-
-
-def _stripe_object_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        return to_dict()
-    raise TypeError(f"Unsupported Stripe object type: {type(value).__name__}")
 
 
 @router.post("/stripe/webhook")
@@ -76,25 +75,33 @@ async def stripe_webhook(
     stored = existing or store_stripe_event(db, event)
     communication_id = None
     order_id = stored.order_id
+    pricing_order_id = None
 
     try:
-        if event_type == "checkout.session.completed":
-            stripe_object = _stripe_object_dict(event["data"]["object"])
-            communication_id, order_id = _handle_checkout_completed(stripe_object, db)
+        if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+            stripe_object = stripe_object_dict(event["data"]["object"])
+            communication_id, order_id, pricing_order_id = _handle_checkout_completed(
+                stripe_object,
+                db,
+            )
             stored.processing_status = "PROCESSED"
         elif event_type == "checkout.session.expired":
-            _handle_checkout_expired(_stripe_object_dict(event["data"]["object"]), db)
+            _handle_checkout_expired(stripe_object_dict(event["data"]["object"]), db)
             stored.processing_status = "PROCESSED"
-        elif event_type in {"payment_intent.payment_failed", "charge.failed"}:
+        elif event_type in {
+            "checkout.session.async_payment_failed",
+            "payment_intent.payment_failed",
+            "charge.failed",
+        }:
             _handle_payment_failed(
-                _stripe_object_dict(event["data"]["object"]),
+                stripe_object_dict(event["data"]["object"]),
                 db,
                 event_type,
             )
             stored.processing_status = "PROCESSED"
         elif event_type in {"charge.refunded", "refund.created", "refund.updated"}:
             _record_refund_event(
-                _stripe_object_dict(event["data"]["object"]),
+                stripe_object_dict(event["data"]["object"]),
                 db,
                 event_type,
             )
@@ -128,6 +135,12 @@ async def stripe_webhook(
             order_id=order_id,
             actor="stripe",
         )
+    if pricing_order_id:
+        enqueue_order_pricing_sync_after_commit(
+            db,
+            order_id=pricing_order_id,
+            actor="stripe",
+        )
 
     logger.info(
         "stripe_webhook_processed event_id=%s event_type=%s status=%s",
@@ -138,17 +151,29 @@ async def stripe_webhook(
     return {"received": True}
 
 
-def _handle_checkout_completed(session: dict, db: Session) -> tuple[int | None, int | None]:
+def _handle_checkout_completed(
+    session: dict,
+    db: Session,
+) -> tuple[int | None, int | None, int | None]:
     order = db.query(Order).filter(Order.stripe_session_id == session["id"]).first()
-    if not order or order.status != OrderStatus.PENDING:
-        return None, order.id if order else None
+    if not order:
+        return None, None, None
+    if session.get("payment_status") not in {"paid", "no_payment_required", None}:
+        return None, order.id, None
 
-    comm_id = mark_order_ready(
-        order,
-        db,
-        payment_intent_id=session.get("payment_intent"),
-        customer_email=session.get("customer_email"),
-    )
+    pricing_captured = apply_checkout_session_pricing(order, session, db)
+    if pricing_captured:
+        order.stripe_pricing_status = "QUEUED"
+    payment_intent_id = stripe_expandable_id(session.get("payment_intent"))
+    comm_id = None
+
+    if order.status == OrderStatus.PENDING:
+        comm_id = mark_order_ready(
+            order,
+            db,
+            payment_intent_id=payment_intent_id,
+            customer_email=session.get("customer_email"),
+        )
     record_order_activity(
         db,
         order_id=order.id,
@@ -157,11 +182,11 @@ def _handle_checkout_completed(session: dict, db: Session) -> tuple[int | None, 
         actor="stripe",
         metadata={
             "stripe_session_id": session.get("id"),
-            "payment_intent_id": session.get("payment_intent"),
+            "payment_intent_id": payment_intent_id,
         },
     )
 
-    return comm_id, order.id
+    return comm_id, order.id, order.id if pricing_captured else None
 
 
 def _handle_checkout_expired(session: dict, db: Session) -> None:
@@ -181,7 +206,9 @@ def _handle_checkout_expired(session: dict, db: Session) -> None:
 
 
 def _handle_payment_failed(stripe_object: dict, db: Session, event_type: str) -> None:
-    payment_intent_id = stripe_object.get("id") or stripe_object.get("payment_intent")
+    payment_intent_id = stripe_expandable_id(
+        stripe_object.get("payment_intent") or stripe_object.get("id")
+    )
     if not payment_intent_id:
         return
 
@@ -202,7 +229,7 @@ def _handle_payment_failed(stripe_object: dict, db: Session, event_type: str) ->
 
 
 def _record_refund_event(stripe_object: dict, db: Session, event_type: str) -> None:
-    payment_intent_id = stripe_object.get("payment_intent")
+    payment_intent_id = stripe_expandable_id(stripe_object.get("payment_intent"))
     if not payment_intent_id:
         charge = stripe_object.get("charge")
         payment_intent_id = charge.get("payment_intent") if isinstance(charge, dict) else None
@@ -212,6 +239,11 @@ def _record_refund_event(stripe_object: dict, db: Session, event_type: str) -> N
     order = db.query(Order).filter(Order.stripe_payment_intent_id == payment_intent_id).first()
     if not order:
         return
+
+    if event_type == "charge.refunded":
+        apply_charge_refunds(order, stripe_object, db)
+    else:
+        apply_refund(order, stripe_object, db)
 
     record_order_activity(
         db,

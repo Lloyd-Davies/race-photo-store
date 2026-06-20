@@ -322,7 +322,8 @@ export default function AdminOrders() {
                   <th className="px-4 py-3 font-medium">Created</th>
                   <th className="px-4 py-3 font-medium">Paid</th>
                   <th className="px-4 py-3 font-medium text-right">Items</th>
-                  <th className="px-4 py-3 font-medium text-right">Subtotal</th>
+                  <th className="px-4 py-3 font-medium text-right">Collected</th>
+                  <th className="px-4 py-3 font-medium">Promotion</th>
                   <th className="px-4 py-3 font-medium">Downloads</th>
                   <th className="px-4 py-3 font-medium text-right">Actions</th>
                 </tr>
@@ -348,7 +349,10 @@ export default function AdminOrders() {
                     <td className="px-4 py-3 text-content-muted">{new Date(order.created_at).toLocaleString()}</td>
                     <td className="px-4 py-3 text-content-muted">{order.paid_at ? new Date(order.paid_at).toLocaleString() : '-'}</td>
                     <td className="px-4 py-3 text-right text-content">{order.item_count}</td>
-                    <td className="px-4 py-3 text-right text-content">{formatMoney(order.subtotal_pence, order.currency)}</td>
+                    <td className="px-4 py-3 text-right text-content">
+                      {order.collected_pence == null ? <span className="text-amber-400">Unsynced</span> : formatMoney(order.collected_pence, order.currency)}
+                    </td>
+                    <td className="max-w-[140px] truncate px-4 py-3 text-content-muted">{order.promotion_codes.join(', ') || '-'}</td>
                     <td className="px-4 py-3 text-content-muted">
                       {order.download_count ?? '-'} / {order.max_downloads ?? '-'}
                     </td>
@@ -371,12 +375,15 @@ export default function AdminOrders() {
                     </Link>
                     <p className="truncate text-xs text-content-muted">{order.email || '-'}</p>
                   </div>
-                  <span className="text-sm font-semibold text-content">{formatMoney(order.subtotal_pence, order.currency)}</span>
+                  <span className="text-sm font-semibold text-content">
+                    {order.collected_pence == null ? 'Unsynced' : formatMoney(order.collected_pence, order.currency)}
+                  </span>
                 </div>
                 <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-content-muted">
                   <span>Event <span className="text-content">{order.event_slug || '-'}</span></span>
                   <span>Items <span className="text-content">{order.item_count}</span></span>
                   <span>Downloads <span className="text-content">{order.download_count ?? '-'} / {order.max_downloads ?? '-'}</span></span>
+                  <span>Promo <span className="text-content">{order.promotion_codes.join(', ') || '-'}</span></span>
                   <span>{new Date(order.created_at).toLocaleDateString()}</span>
                 </div>
                 <div className="mb-3 flex flex-wrap gap-1">

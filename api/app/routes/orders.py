@@ -12,11 +12,13 @@ from app.fulfillment import mark_order_ready
 from app.order_access import verify_order_access_token
 from app.rate_limit import enforce_rate_limit
 from app.schemas import OrderDownloadItemOut, OrderOut, OrderZipOut
+from app.stripe_pricing_queue import enqueue_order_pricing_sync_after_commit
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.delivery import ensure_delivery_for_order
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
 from photostore.storage import InvalidStorageKey, get_zip_storage_backend
+from photostore.stripe_pricing import apply_checkout_session_pricing, stripe_expandable_id
 
 router = APIRouter(prefix="/api", tags=["orders"])
 logger = logging.getLogger(__name__)
@@ -144,10 +146,13 @@ def _try_fulfill_from_stripe(order: Order, db: Session) -> None:
         sess = stripe.checkout.Session.retrieve(order.stripe_session_id)
         if sess.payment_status != "paid":
             return
+        pricing_captured = apply_checkout_session_pricing(order, sess, db)
+        if pricing_captured:
+            order.stripe_pricing_status = "QUEUED"
         comm_id = mark_order_ready(
             order,
             db,
-            payment_intent_id=sess.payment_intent,
+            payment_intent_id=stripe_expandable_id(sess.payment_intent),
             customer_email=sess.customer_email or None,
         )
         db.commit()
@@ -159,6 +164,8 @@ def _try_fulfill_from_stripe(order: Order, db: Session) -> None:
                 order_id=order.id,
                 actor="system",
             )
+        if pricing_captured:
+            enqueue_order_pricing_sync_after_commit(db, order_id=order.id, actor="system")
         logger.info("Order %s fulfilled via Stripe polling (webhook fallback)", order.id)
     except Exception:
         logger.exception("Stripe polling fallback failed for order %s", order.id)

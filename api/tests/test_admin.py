@@ -549,6 +549,8 @@ def test_admin_metrics_returns_order_revenue_delivery_and_email_health(admin_cli
     assert data["totals"]["paid_orders"] >= 1
     assert data["totals"]["items_sold"] >= 3
     assert data["money"][0]["gross_sales_pence"] >= 1500
+    assert data["money"][0]["paid_revenue_pence"] == 0
+    assert data["pricing_coverage"]["unsynced_orders"] >= 1
     assert any(row["key"] == "READY" for row in data["status_breakdown"])
     assert any(row["key"] == "READY" for row in data["delivery_health"])
     assert any(row["key"] == "FAILED" for row in data["email_health"])
@@ -602,6 +604,77 @@ def test_admin_metrics_reports_stripe_webhook_health(admin_client, db_session, m
     assert health["valid_events_24h"] == 2
     assert health["processed_events_24h"] == 1
     assert health["ignored_events_24h"] == 1
+
+
+def test_admin_metrics_uses_stripe_collected_discount_refund_and_promotion(
+    admin_client, db_session, test_photos
+):
+    from photostore.models import OrderDiscount, OrderRefund
+
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+    order.stripe_amount_subtotal_pence = 1500
+    order.stripe_discount_pence = 300
+    order.stripe_tax_pence = 0
+    order.stripe_shipping_pence = 0
+    order.stripe_amount_paid_pence = 1200
+    order.stripe_amount_refunded_pence = 200
+    order.stripe_pricing_status = "SYNCED"
+    db_session.add(OrderDiscount(
+        order_id=order.id,
+        stripe_discount_id="di_metrics",
+        stripe_promotion_code_id="promo_metrics",
+        promotion_code="SAVE20",
+        amount_pence=300,
+        currency="GBP",
+    ))
+    db_session.add(OrderRefund(
+        order_id=order.id,
+        stripe_refund_id="re_metrics",
+        amount_pence=200,
+        currency="GBP",
+        status="succeeded",
+        stripe_created_at=datetime.now(timezone.utc),
+    ))
+    db_session.commit()
+
+    resp = admin_client.get("/api/admin/metrics?range=all")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    gbp = next(row for row in data["money"] if row["currency"] == "GBP")
+    assert gbp["gross_sales_pence"] == 1500
+    assert gbp["paid_revenue_pence"] == 1200
+    assert gbp["discount_pence"] == 300
+    assert gbp["refunded_pence"] == 200
+    assert gbp["net_revenue_pence"] == gbp["paid_revenue_pence"] - gbp["refunded_pence"]
+    promo = next(row for row in data["promotion_codes"] if row["promotion_code"] == "SAVE20")
+    assert promo["order_count"] == 1
+    assert data["pricing_coverage"]["authoritative_orders"] >= 1
+
+
+def test_admin_queues_missing_stripe_pricing_backfill(
+    admin_client, db_session, test_photos, mock_celery_send_task, monkeypatch
+):
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_fake")
+    order = _create_ready_order_with_delivery(db_session, test_photos)
+    db_session.commit()
+
+    resp = admin_client.post("/api/admin/stripe/pricing-sync?scope=missing&limit=100")
+
+    assert resp.status_code == 200
+    assert resp.json()["orders_queued"] >= 1
+    db_session.refresh(order)
+    assert order.stripe_pricing_status == "QUEUED"
+    mock_celery_send_task.assert_any_call(
+        "tasks.sync_stripe_pricing.sync_stripe_pricing",
+        args=[order.id],
+    )
+
+    duplicate = admin_client.post("/api/admin/stripe/pricing-sync?scope=missing&limit=100")
+    assert duplicate.status_code == 200
+    assert duplicate.json()["orders_queued"] == 0
 
 
 def test_admin_list_orders_filters_paginates_and_searches_in_db(admin_client, db_session, test_photos):

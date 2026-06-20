@@ -223,7 +223,15 @@ export default function AdminOrderDetail() {
             <p className="text-content-muted">Email: <span className="text-content">{order.email || '—'}</span></p>
             <p className="text-content-muted">Event: <span className="text-content">{order.event_slug || '—'}</span></p>
             <p className="text-content-muted">Items: <span className="text-content">{order.item_count}</span></p>
-            <p className="text-content-muted">Subtotal: <span className="text-content">{formatMoney(order.subtotal_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Catalogue subtotal: <span className="text-content">{formatMoney(order.subtotal_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Stripe subtotal: <span className="text-content">{order.stripe_subtotal_pence == null ? 'Not synced' : formatMoney(order.stripe_subtotal_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Discount: <span className="text-content">{order.discount_pence == null ? 'Not synced' : formatMoney(order.discount_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Collected: <span className="text-content">{order.collected_pence == null ? 'Not synced' : formatMoney(order.collected_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Refunded: <span className="text-content">{formatMoney(order.refunded_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Net: <span className="text-content">{order.net_pence == null ? 'Not synced' : formatMoney(order.net_pence, order.currency)}</span></p>
+            <p className="text-content-muted">Promotion: <span className="text-content">{order.promotion_codes.join(', ') || '-'}</span></p>
+            <p className="text-content-muted">Pricing sync: <span className="text-content">{order.stripe_pricing_status}</span></p>
+            {order.stripe_pricing_error && <p className="text-red-400 md:col-span-2">Pricing error: {order.stripe_pricing_error}</p>}
             <p className="text-content-muted">
               Downloads: <span className="text-content">{order.download_count ?? '—'} / {order.max_downloads ?? '—'}</span>
             </p>
@@ -262,7 +270,7 @@ export default function AdminOrderDetail() {
         <div className="bg-surface-900 border border-surface-700 rounded-xl mb-6 overflow-hidden">
           <div className="px-4 py-3 border-b border-surface-700 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-content">Order items</h2>
-            <span className="text-sm font-medium text-content">{formatMoney(order.subtotal_pence, order.currency)}</span>
+            <span className="text-sm font-medium text-content">{formatMoney(order.subtotal_pence, order.currency)} catalogue</span>
           </div>
           <div className="divide-y divide-surface-700">
             {order.items.map((item) => (
