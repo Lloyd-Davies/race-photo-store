@@ -27,7 +27,13 @@ class StorageBackend(Protocol):
         content_type: str | None = None,
     ) -> None: ...
     def delete(self, key: str) -> None: ...
-    def presigned_get_url(self, key: str, expires_seconds: int = 3600) -> str: ...
+    def presigned_get_url(
+        self,
+        key: str,
+        expires_seconds: int = 3600,
+        response_content_disposition: str | None = None,
+        response_content_type: str | None = None,
+    ) -> str: ...
 
 
 def normalize_storage_key(key: str) -> str:
@@ -76,7 +82,13 @@ class LocalStorageBackend:
     def delete(self, key: str) -> None:
         self.local_path(key).unlink(missing_ok=True)
 
-    def presigned_get_url(self, key: str, expires_seconds: int = 3600) -> str:
+    def presigned_get_url(
+        self,
+        key: str,
+        expires_seconds: int = 3600,
+        response_content_disposition: str | None = None,
+        response_content_type: str | None = None,
+    ) -> str:
         raise NotImplementedError("Local storage is served through application routes")
 
 
@@ -171,19 +183,44 @@ class R2StorageBackend:
         key = normalize_storage_key(key)
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
-    def presigned_get_url(self, key: str, expires_seconds: int = 3600) -> str:
+    def presigned_get_url(
+        self,
+        key: str,
+        expires_seconds: int = 3600,
+        response_content_disposition: str | None = None,
+        response_content_type: str | None = None,
+    ) -> str:
         key = normalize_storage_key(key)
+        params = {"Bucket": self.bucket, "Key": key}
+        if response_content_disposition:
+            params["ResponseContentDisposition"] = response_content_disposition
+        if response_content_type:
+            params["ResponseContentType"] = response_content_type
         return self.client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
+            Params=params,
             ExpiresIn=expires_seconds,
         )
 
 
-def get_storage_backend() -> StorageBackend:
-    backend = settings.STORAGE_BACKEND.lower()
+def _storage_backend_for_name(backend: str) -> StorageBackend:
+    backend = backend.strip().lower()
     if backend == "local":
         return LocalStorageBackend()
     if backend == "r2":
         return R2StorageBackend()
-    raise ValueError(f"Unsupported STORAGE_BACKEND: {settings.STORAGE_BACKEND}")
+    raise ValueError(f"Unsupported storage backend: {backend}")
+
+
+def get_storage_backend() -> StorageBackend:
+    return _storage_backend_for_name(settings.STORAGE_BACKEND)
+
+
+def get_zip_storage_backend_name() -> str:
+    explicit_backend = settings.ZIP_STORAGE_BACKEND.strip()
+    legacy_backend = settings.STORAGE_BACKEND.strip()
+    return (explicit_backend or legacy_backend or "local").lower()
+
+
+def get_zip_storage_backend() -> StorageBackend:
+    return _storage_backend_for_name(get_zip_storage_backend_name())

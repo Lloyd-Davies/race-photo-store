@@ -124,6 +124,46 @@ def test_get_order_ready_with_zip_download_url(client, db_session, tmp_path, mon
     assert data["download_url"].endswith(f"/d/{token}")
 
 
+def test_get_order_ready_missing_r2_zip_reports_expired(
+    client,
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from app.routes import orders as orders_module
+
+    class MissingR2Storage:
+        def exists(self, key):
+            return False
+
+    monkeypatch.setattr(orders_module, "get_zip_storage_backend", lambda: MissingR2Storage())
+    order = _create_order(db_session, OrderStatus.READY)
+    delivery = _add_delivery(
+        db_session,
+        order,
+        zip_path=f"zips/order-{order.id}.zip",
+        zip_status=DeliveryZipStatus.READY,
+        zip_created_at=datetime.now(timezone.utc),
+        zip_expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+    )
+
+    resp = client.get(
+        f"/api/orders/{order.id}",
+        headers={"X-Order-Access": _order_access(order.id)},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["zip"]["status"] == "EXPIRED"
+    assert data["zip"]["download_url"] is None
+    assert data["download_url"] is None
+    db_session.refresh(order)
+    db_session.refresh(delivery)
+    assert order.status == OrderStatus.READY
+    assert delivery.zip_status == DeliveryZipStatus.EXPIRED
+    assert delivery.zip_deleted_at is not None
+
+
 def test_prepare_zip_first_call_queues_build(client, db_session, test_photos, mock_celery_send_task):
     order = _create_order(db_session, OrderStatus.READY)
     delivery = _add_delivery(db_session, order)
@@ -177,6 +217,45 @@ def test_prepare_zip_ready_does_not_queue_duplicate(
     assert resp.status_code == 200
     assert resp.json()["status"] == "READY"
     mock_celery_send_task.assert_not_called()
+
+
+def test_prepare_zip_regenerates_when_ready_zip_missing_from_r2(
+    client,
+    db_session,
+    monkeypatch,
+    mock_celery_send_task,
+):
+    from app.routes import orders as orders_module
+
+    class MissingR2Storage:
+        def exists(self, key):
+            return False
+
+    monkeypatch.setattr(orders_module, "get_zip_storage_backend", lambda: MissingR2Storage())
+    order = _create_order(db_session, OrderStatus.READY)
+    delivery = _add_delivery(
+        db_session,
+        order,
+        zip_path=f"zips/order-{order.id}.zip",
+        zip_status=DeliveryZipStatus.READY,
+        zip_created_at=datetime.now(timezone.utc),
+        zip_expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+    )
+
+    resp = client.post(
+        f"/api/orders/{order.id}/zip",
+        headers={"X-Order-Access": _order_access(order.id)},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "BUILDING"
+    db_session.refresh(delivery)
+    assert delivery.zip_status == DeliveryZipStatus.BUILDING
+    assert delivery.zip_error is None
+    mock_celery_send_task.assert_called_once_with(
+        "tasks.build_zip.build_zip",
+        args=[order.id],
+    )
 
 
 def test_prepare_zip_failed_allows_retry(client, db_session, mock_celery_send_task):

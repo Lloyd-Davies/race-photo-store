@@ -1189,6 +1189,39 @@ def test_email_config_returns_current_settings(admin_client, monkeypatch):
     assert data["from_address"] == "from@example.com"
 
 
+def test_zip_storage_status_requires_admin(client):
+    resp = client.get("/api/admin/storage/zip/status")
+    assert resp.status_code == 401
+
+
+def test_zip_storage_status_reports_effective_backend(admin_client, monkeypatch):
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "r2")
+    monkeypatch.setattr(settings, "ZIP_STORAGE_BACKEND", "local")
+    monkeypatch.setattr(settings, "R2_ACCOUNT_ID", "acct_test")
+    monkeypatch.setattr(settings, "R2_ACCESS_KEY_ID", "key_test")
+    monkeypatch.setattr(settings, "R2_SECRET_ACCESS_KEY", "secret_test")
+    monkeypatch.setattr(settings, "R2_BUCKET", "photostore")
+    monkeypatch.setattr(settings, "R2_ENDPOINT_URL", "")
+
+    resp = admin_client.get("/api/admin/storage/zip/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["effective_backend"] == "local"
+    assert data["storage_backend"] == "r2"
+    assert data["zip_storage_backend"] == "local"
+    assert data["r2_bucket"] == "photostore"
+    assert data["r2_account_id_set"] is True
+    assert data["r2_endpoint_url_set"] is True
+    assert data["r2_access_key_id_set"] is True
+    assert data["r2_secret_access_key_set"] is True
+    assert data["backend_constructed"] is True
+    assert data["error"] is None
+    assert "secret_test" not in str(data)
+
+
 def test_admin_settings_checkout_update(admin_client, db_session):
     resp = admin_client.patch(
         "/api/admin/settings/checkout",

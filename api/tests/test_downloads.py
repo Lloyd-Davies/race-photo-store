@@ -116,24 +116,67 @@ def test_download_redirects_to_presigned_url_for_r2_backend(
         def exists(self, key):
             return True
 
-        def presigned_get_url(self, key, expires_seconds=3600):
+        def presigned_get_url(
+            self,
+            key,
+            expires_seconds=3600,
+            response_content_disposition=None,
+            response_content_type=None,
+        ):
             self.presigned_key = key
-            return f"https://r2.example.test/{key}?signature=test"
+            self.disposition = response_content_disposition
+            self.content_type = response_content_type
+            return (
+                f"https://r2.example.test/{key}?signature=test"
+                f"&disposition={response_content_disposition}"
+                f"&content_type={response_content_type}"
+            )
 
     storage = FakeR2Storage()
-    monkeypatch.setattr(downloads_module, "get_storage_backend", lambda: storage)
+    monkeypatch.setattr(downloads_module, "get_zip_storage_backend", lambda: storage)
     delivery = _setup_delivery(db_session, tmp_path)
 
     resp = client.get(f"/d/{delivery.token}", follow_redirects=False)
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == (
+    assert resp.headers["location"].startswith(
         f"https://r2.example.test/zips/order-{delivery.order_id}.zip?signature=test"
     )
     assert "x-accel-redirect" not in resp.headers
     assert storage.presigned_key == f"zips/order-{delivery.order_id}.zip"
+    assert storage.disposition == (
+        f'attachment; filename="event-test-event-order-{delivery.order_id}.zip"'
+    )
+    assert storage.content_type == "application/zip"
     db_session.refresh(delivery)
     assert delivery.download_count == 1
+
+
+def test_download_missing_r2_zip_marks_expired_without_incrementing(
+    client,
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from app.routes import downloads as downloads_module
+
+    class MissingR2Storage:
+        is_local = False
+
+        def exists(self, key):
+            return False
+
+    monkeypatch.setattr(downloads_module, "get_zip_storage_backend", lambda: MissingR2Storage())
+    delivery = _setup_delivery(db_session, tmp_path)
+
+    resp = client.get(f"/d/{delivery.token}", follow_redirects=False)
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "ZIP has expired. Regenerate it from the order page."
+    db_session.refresh(delivery)
+    assert delivery.download_count == 0
+    assert delivery.zip_status == DeliveryZipStatus.EXPIRED
+    assert delivery.zip_deleted_at is not None
 
 
 def test_download_expired_token(client, db_session, tmp_path, monkeypatch):

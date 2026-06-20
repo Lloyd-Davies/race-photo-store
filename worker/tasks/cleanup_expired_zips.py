@@ -4,7 +4,7 @@ from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
 from photostore.models import Delivery, DeliveryZipStatus
-from photostore.storage import get_storage_backend
+from photostore.storage import get_zip_storage_backend
 
 
 @celery_app.task(name="tasks.cleanup_expired_zips.cleanup_expired_zips")
@@ -24,7 +24,7 @@ def cleanup_expired_zips() -> int:
             .all()
         )
 
-        storage = get_storage_backend()
+        storage = get_zip_storage_backend()
         for delivery in deliveries:
             if delivery.zip_path:
                 try:

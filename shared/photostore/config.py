@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     REDIS_URL: str
     STORAGE_ROOT: str = "/data/photos"
     STORAGE_BACKEND: str = "local"
+    ZIP_STORAGE_BACKEND: str = ""
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     PUBLIC_BASE_URL: str = ""

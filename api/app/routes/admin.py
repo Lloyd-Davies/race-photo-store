@@ -72,6 +72,7 @@ from photostore.models import (
     OrderActivity, Photo, PhotoState, PhotoTag, StripeEvent,
 )
 from photostore.pricing import effective_photo_price_pence, get_app_settings, normalize_currency
+from photostore.storage import get_zip_storage_backend, get_zip_storage_backend_name
 from app.fulfillment import mark_order_ready
 from app.order_activity import record_order_activity
 from app.stripe_event_store import store_stripe_event
@@ -1174,6 +1175,30 @@ def get_admin_settings(db: Session = Depends(get_db)) -> AdminSettingsOut:
         site_tagline=settings.SITE_TAGLINE,
         email=_email_config_out(),
     )
+
+
+@router.get("/storage/zip/status", dependencies=[Depends(require_admin)])
+def get_zip_storage_status() -> dict:
+    backend_constructed = True
+    error = None
+    try:
+        get_zip_storage_backend()
+    except Exception as exc:
+        backend_constructed = False
+        error = str(exc)
+
+    return {
+        "effective_backend": get_zip_storage_backend_name(),
+        "storage_backend": settings.STORAGE_BACKEND,
+        "zip_storage_backend": settings.ZIP_STORAGE_BACKEND or None,
+        "r2_bucket": settings.R2_BUCKET,
+        "r2_account_id_set": bool(settings.R2_ACCOUNT_ID),
+        "r2_endpoint_url_set": bool(settings.R2_ENDPOINT_URL or settings.R2_ACCOUNT_ID),
+        "r2_access_key_id_set": bool(settings.R2_ACCESS_KEY_ID),
+        "r2_secret_access_key_set": bool(settings.R2_SECRET_ACCESS_KEY),
+        "backend_constructed": backend_constructed,
+        "error": error,
+    }
 
 
 @router.patch(

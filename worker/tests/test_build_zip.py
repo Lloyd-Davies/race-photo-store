@@ -172,7 +172,7 @@ def test_build_zip_uploads_zip_to_configured_backend(
 
     _configure_paths(monkeypatch, settings, storage)
     monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
-    monkeypatch.setattr(bz_module, "get_storage_backend", lambda: zip_storage)
+    monkeypatch.setattr(bz_module, "get_zip_storage_backend", lambda: zip_storage)
 
     _get_build_zip_task().apply(args=[order.id])
 
@@ -187,6 +187,36 @@ def test_build_zip_uploads_zip_to_configured_backend(
     db_session.refresh(delivery)
     assert delivery.zip_status == DeliveryZipStatus.READY
     assert delivery.zip_path == f"zips/order-{order.id}.zip"
+
+
+def test_build_zip_reads_originals_from_local_storage_even_with_zip_backend(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from photostore.config import settings
+
+    class FakeZipStorage:
+        def __init__(self):
+            self.uploaded_content = None
+
+        def upload_file(self, source, key, content_type=None):
+            self.uploaded_content = Path(source).read_bytes()
+
+    bz_module = _get_bz_module()
+    storage = tmp_path / "photos"
+    order, _ = _seed(db_session, storage)
+    zip_storage = FakeZipStorage()
+
+    _configure_paths(monkeypatch, settings, storage)
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(bz_module, "get_zip_storage_backend", lambda: zip_storage)
+
+    _get_build_zip_task().apply(args=[order.id])
+
+    assert zip_storage.uploaded_content is not None
+    with zipfile.ZipFile(io.BytesIO(zip_storage.uploaded_content)) as zf:
+        assert zf.read("zip-photo-1.jpg") == b"ORIGINAL_zip-photo-1"
 
 
 def test_build_zip_regenerates_existing_zip(db_session, tmp_path, monkeypatch):
@@ -314,7 +344,7 @@ def test_cleanup_expired_zips_deletes_via_storage_backend(
     _configure_paths(monkeypatch, settings, storage)
     monkeypatch.setattr(settings, "ZIP_CLEANUP_ENABLED", True)
     monkeypatch.setattr(cleanup_module, "SessionLocal", lambda: db_session)
-    monkeypatch.setattr(cleanup_module, "get_storage_backend", lambda: zip_storage)
+    monkeypatch.setattr(cleanup_module, "get_zip_storage_backend", lambda: zip_storage)
 
     result = _get_cleanup_task().apply().get()
 

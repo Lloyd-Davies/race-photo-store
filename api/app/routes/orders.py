@@ -15,7 +15,7 @@ from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.delivery import ensure_delivery_for_order
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
-from photostore.storage import InvalidStorageKey, get_storage_backend
+from photostore.storage import InvalidStorageKey, get_zip_storage_backend
 
 router = APIRouter(prefix="/api", tags=["orders"])
 logger = logging.getLogger(__name__)
@@ -36,9 +36,14 @@ def _zip_file_exists(delivery: Delivery) -> bool:
     if not delivery.zip_path:
         return False
     try:
-        return get_storage_backend().exists(delivery.zip_path)
+        return get_zip_storage_backend().exists(delivery.zip_path)
     except InvalidStorageKey:
         return False
+
+
+def _mark_zip_artifact_expired(delivery: Delivery) -> None:
+    delivery.zip_status = DeliveryZipStatus.EXPIRED
+    delivery.zip_deleted_at = datetime.now(timezone.utc)
 
 
 def _zip_out(delivery: Delivery | None) -> OrderZipOut:
@@ -53,7 +58,8 @@ def _zip_out(delivery: Delivery | None) -> OrderZipOut:
     )
 
     if status == DeliveryZipStatus.READY and not is_ready:
-        status = DeliveryZipStatus.EXPIRED
+        _mark_zip_artifact_expired(delivery)
+        status = delivery.zip_status
 
     return OrderZipOut(
         status=status,
@@ -174,7 +180,10 @@ def get_order(
         db.refresh(order)
 
     delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
-    return _order_out(order, delivery, db)
+    response = _order_out(order, delivery, db)
+    if delivery and db.is_modified(delivery, include_collections=False):
+        db.commit()
+    return response
 
 
 @router.post("/orders/{order_id}/zip", response_model=OrderZipOut)

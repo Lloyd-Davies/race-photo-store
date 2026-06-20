@@ -9,7 +9,7 @@ from app.deps import get_db
 from app.rate_limit import enforce_rate_limit
 from photostore.config import settings
 from photostore.models import Delivery, DeliveryZipStatus, OrderItem, Photo
-from photostore.storage import InvalidStorageKey, get_storage_backend
+from photostore.storage import InvalidStorageKey, get_zip_storage_backend
 
 router = APIRouter(tags=["downloads"])
 
@@ -97,7 +97,7 @@ def download(token: str, request: Request, db: Session = Depends(get_db)) -> Res
         db.commit()
         return _zip_not_ready(409, "ZIP has expired. Regenerate it from the order page.")
 
-    storage = get_storage_backend()
+    storage = get_zip_storage_backend()
     try:
         zip_exists = storage.exists(delivery.zip_path)
     except InvalidStorageKey:
@@ -129,7 +129,11 @@ def download(token: str, request: Request, db: Session = Depends(get_db)) -> Res
         )
 
     return RedirectResponse(
-        storage.presigned_get_url(delivery.zip_path),
+        storage.presigned_get_url(
+            delivery.zip_path,
+            response_content_disposition=f'attachment; filename="{filename}"',
+            response_content_type="application/zip",
+        ),
         status_code=302,
         headers={"Cache-Control": "no-store"},
     )

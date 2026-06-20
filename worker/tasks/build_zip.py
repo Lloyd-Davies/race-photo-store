@@ -6,7 +6,7 @@ from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderActivity, OrderItem, OrderStatus, Photo
-from photostore.storage import LocalStorageBackend, get_storage_backend
+from photostore.storage import LocalStorageBackend, get_zip_storage_backend
 
 ZIP_ERROR_MAX_LENGTH = 1000
 
@@ -71,7 +71,7 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         cache_zip.unlink(missing_ok=True)
 
         source_storage = LocalStorageBackend()
-        zip_storage = get_storage_backend()
+        zip_storage = get_zip_storage_backend()
         zip_key = f"zips/order-{order_id}.zip"
 
         try:
