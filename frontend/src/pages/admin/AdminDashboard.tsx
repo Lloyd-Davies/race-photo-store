@@ -10,6 +10,7 @@ import {
   ShoppingCart,
   Images,
   ReceiptText,
+  Webhook,
 } from 'lucide-react'
 import {
   Bar,
@@ -191,6 +192,22 @@ export default function AdminDashboard() {
 
   const statusRows = metrics?.status_breakdown ?? []
   const deliveryRows = metrics?.delivery_health ?? []
+  const webhookHealth = metrics?.stripe_webhook_health ?? {
+    secret_configured: false,
+    last_valid_event_at: null,
+    last_event_type: null,
+    valid_events_24h: 0,
+    processed_events_24h: 0,
+    ignored_events_24h: 0,
+  }
+  const lastValidWebhookAt = webhookHealth?.last_valid_event_at
+    ? new Date(webhookHealth.last_valid_event_at)
+    : null
+  const webhookStatus = !webhookHealth?.secret_configured
+    ? { label: 'Not configured', className: 'border-red-500/30 bg-red-500/10 text-red-400' }
+    : lastValidWebhookAt
+      ? { label: 'Valid event received', className: 'border-green-500/30 bg-green-500/10 text-green-400' }
+      : { label: 'Awaiting valid event', className: 'border-amber-500/30 bg-amber-500/10 text-amber-400' }
 
   return (
     <div className="space-y-6">
@@ -251,6 +268,44 @@ export default function AdminDashboard() {
               Mixed currencies are present. Monetary totals are grouped by currency.
             </p>
           )}
+
+          <Panel>
+            <SectionTitle
+              title="Stripe webhook"
+              action={(
+                <span className={`rounded border px-2 py-0.5 text-xs ${webhookStatus.className}`}>
+                  {webhookStatus.label}
+                </span>
+              )}
+            />
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-5">
+              <div>
+                <p className="text-xs text-content-muted">Last valid event</p>
+                <p className="mt-1 text-content">
+                  {lastValidWebhookAt ? lastValidWebhookAt.toLocaleString() : 'None recorded'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-content-muted">Event type</p>
+                <p className="mt-1 truncate text-content">{webhookHealth.last_event_type ?? '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-content-muted">Valid in 24h</p>
+                <p className="mt-1 text-content">{webhookHealth.valid_events_24h}</p>
+              </div>
+              <div>
+                <p className="text-xs text-content-muted">Processed in 24h</p>
+                <p className="mt-1 text-content">{webhookHealth.processed_events_24h}</p>
+              </div>
+              <div>
+                <p className="text-xs text-content-muted">Ignored in 24h</p>
+                <div className="mt-1 flex items-center gap-2 text-content">
+                  <Webhook size={14} className="text-content-muted" />
+                  {webhookHealth.ignored_events_24h}
+                </div>
+              </div>
+            </div>
+          </Panel>
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
             <Kpi label="Gross sales" value={formatMetricMoney(metrics, 'gross_sales_pence')} icon={<TrendingUp size={16} />} />

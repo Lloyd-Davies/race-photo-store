@@ -6,6 +6,7 @@ import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from app.communication_queue import enqueue_communication_after_commit
 from app.deps import get_db
 from app.fulfillment import mark_order_ready
 from app.order_access import verify_order_access_token
@@ -152,7 +153,12 @@ def _try_fulfill_from_stripe(order: Order, db: Session) -> None:
         db.commit()
         db.refresh(order)
         if comm_id:
-            celery_app.send_task("tasks.send_email.send_email", args=[comm_id])
+            enqueue_communication_after_commit(
+                db,
+                communication_id=comm_id,
+                order_id=order.id,
+                actor="system",
+            )
         logger.info("Order %s fulfilled via Stripe polling (webhook fallback)", order.id)
     except Exception:
         logger.exception("Stripe polling fallback failed for order %s", order.id)

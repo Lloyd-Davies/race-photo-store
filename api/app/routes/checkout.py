@@ -5,12 +5,12 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.communication_queue import enqueue_communication_after_commit
 from app.deps import get_db
 from app.fulfillment import mark_order_ready
 from app.order_activity import record_order_activity
 from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
-from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.models import Cart, Event, Order, OrderItem, OrderStatus
 from photostore.pricing import effective_photo_price_pence, get_app_settings
@@ -98,7 +98,12 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
         )
         db.commit()
         if comm_id:
-            celery_app.send_task("tasks.send_email.send_email", args=[comm_id])
+            enqueue_communication_after_commit(
+                db,
+                communication_id=comm_id,
+                order_id=order.id,
+                actor="system",
+            )
         return CheckoutOut(
             order_id=order.id,
             stripe_checkout_url=None,

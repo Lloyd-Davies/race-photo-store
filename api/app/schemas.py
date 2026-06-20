@@ -384,6 +384,15 @@ class AdminMetricsTotals(BaseModel):
     average_items_per_order: float = 0
 
 
+class AdminStripeWebhookHealth(BaseModel):
+    secret_configured: bool = False
+    last_valid_event_at: Optional[datetime] = None
+    last_event_type: Optional[str] = None
+    valid_events_24h: int = 0
+    processed_events_24h: int = 0
+    ignored_events_24h: int = 0
+
+
 class AdminMetricsOut(BaseModel):
     range: str
     generated_at: datetime
@@ -402,6 +411,7 @@ class AdminMetricsOut(BaseModel):
     daily_trends: list[AdminTrendPoint] = Field(default_factory=list)
     alerts: list[AdminOperationalAlert] = Field(default_factory=list)
     recent_activity: list[AdminActivityOut] = Field(default_factory=list)
+    stripe_webhook_health: AdminStripeWebhookHealth
 
 
 class AdminOrderTimelineOut(BaseModel):

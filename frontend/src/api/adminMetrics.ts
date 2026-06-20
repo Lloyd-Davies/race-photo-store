@@ -86,6 +86,15 @@ export interface AdminMetricsTotals {
   average_items_per_order: number
 }
 
+export interface AdminStripeWebhookHealth {
+  secret_configured: boolean
+  last_valid_event_at?: string
+  last_event_type?: string
+  valid_events_24h: number
+  processed_events_24h: number
+  ignored_events_24h: number
+}
+
 export interface AdminMetrics {
   range: string
   generated_at: string
@@ -104,6 +113,7 @@ export interface AdminMetrics {
   daily_trends: AdminTrendPoint[]
   alerts: AdminOperationalAlert[]
   recent_activity: AdminActivity[]
+  stripe_webhook_health: AdminStripeWebhookHealth
 }
 
 export type AdminMetricsRange = '7d' | '30d' | '90d' | '365d' | 'all'

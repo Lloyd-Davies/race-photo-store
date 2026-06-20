@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy import String, asc, cast, desc, func, or_
 import stripe
 
+from app.communication_queue import enqueue_communication_after_commit
 from app.admin_session import create_admin_session_tokens, verify_admin_session_token
 from app.deps import get_db, require_admin
 from app.event_access import hash_event_password
@@ -48,6 +49,7 @@ from app.schemas import (
     AdminResetDeliveryRequest,
     AdminSessionOut,
     AdminStripeSyncOut,
+    AdminStripeWebhookHealth,
     AdminTrendPoint,
     BibTagsRequest,
     BibTagsResult,
@@ -678,14 +680,21 @@ def _stripe_session_dict(session) -> dict:
     }
 
 
-def _apply_stripe_session_to_order(order: Order, session: dict, db: Session, *, actor: str) -> bool:
+def _apply_stripe_session_to_order(
+    order: Order,
+    session: dict,
+    db: Session,
+    *,
+    actor: str,
+) -> tuple[bool, int | None]:
     payment_status = session.get("payment_status")
     status = session.get("status")
     changed = False
+    communication_id = None
 
     if payment_status == "paid" or status == "complete":
         if order.status == OrderStatus.PENDING:
-            mark_order_ready(
+            communication_id = mark_order_ready(
                 order,
                 db,
                 payment_intent_id=session.get("payment_intent"),
@@ -719,7 +728,7 @@ def _apply_stripe_session_to_order(order: Order, session: dict, db: Session, *, 
     if session.get("customer_email") and order.email != session.get("customer_email"):
         order.email = session.get("customer_email")
         changed = True
-    return changed
+    return changed, communication_id
 
 
 @router.post("/login", response_model=AdminSessionOut)
@@ -1054,6 +1063,34 @@ def get_admin_metrics(
     alerts = _build_operational_alerts(db, event_id=event_id, now=now)
     recent_activity = _admin_activity_feed(db, limit=12)
 
+    valid_stripe_events = db.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id.like("evt_%")
+    )
+    last_valid_stripe_event = (
+        valid_stripe_events
+        .order_by(StripeEvent.received_at.desc())
+        .first()
+    )
+    recent_valid_stripe_events = valid_stripe_events.filter(
+        StripeEvent.received_at >= now - timedelta(hours=24)
+    )
+    stripe_webhook_health = AdminStripeWebhookHealth(
+        secret_configured=bool(settings.STRIPE_WEBHOOK_SECRET),
+        last_valid_event_at=(
+            last_valid_stripe_event.received_at if last_valid_stripe_event else None
+        ),
+        last_event_type=(
+            last_valid_stripe_event.event_type if last_valid_stripe_event else None
+        ),
+        valid_events_24h=recent_valid_stripe_events.count(),
+        processed_events_24h=recent_valid_stripe_events.filter(
+            StripeEvent.processing_status == "PROCESSED"
+        ).count(),
+        ignored_events_24h=recent_valid_stripe_events.filter(
+            StripeEvent.processing_status == "IGNORED"
+        ).count(),
+    )
+
     totals = AdminMetricsTotals(
         total_orders=len(created_orders),
         paid_orders=len(paid_orders),
@@ -1144,6 +1181,7 @@ def get_admin_metrics(
         daily_trends=[daily[key] for key in sorted(daily.keys())],
         alerts=alerts,
         recent_activity=recent_activity,
+        stripe_webhook_health=stripe_webhook_health,
     )
 
 
@@ -1898,7 +1936,12 @@ def reset_delivery(
             metadata={"kind": CommunicationKind.DELIVERY_RESET.value},
         )
         db.commit()
-        celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
+        enqueue_communication_after_commit(
+            db,
+            communication_id=comm.id,
+            order_id=order_id,
+            actor="admin",
+        )
 
     item_count = db.query(OrderItem).filter(OrderItem.order_id == order_id).count()
 
@@ -2039,7 +2082,13 @@ def send_communication(
     db.commit()
     db.refresh(comm)
 
-    celery_app.send_task("tasks.send_email.send_email", args=[comm.id])
+    enqueue_communication_after_commit(
+        db,
+        communication_id=comm.id,
+        order_id=order_id,
+        actor="admin",
+    )
+    db.refresh(comm)
 
     return comm  # type: ignore[return-value]
 
@@ -2091,7 +2140,7 @@ def sync_order_with_stripe(order_id: int, db: Session = Depends(get_db)) -> Admi
             orders_updated=0,
         )
 
-    store_stripe_event(
+    stored = store_stripe_event(
         db,
         {
             "id": f"manual_sync_{order.id}_{uuid.uuid4()}",
@@ -2101,7 +2150,9 @@ def sync_order_with_stripe(order_id: int, db: Session = Depends(get_db)) -> Admi
             "data": {"object": session},
         },
     )
-    changed = _apply_stripe_session_to_order(order, session, db, actor="admin")
+    changed, communication_id = _apply_stripe_session_to_order(order, session, db, actor="admin")
+    stored.processing_status = "PROCESSED"
+    stored.error_message = None
     if not changed:
         record_order_activity(
             db,
@@ -2112,6 +2163,14 @@ def sync_order_with_stripe(order_id: int, db: Session = Depends(get_db)) -> Admi
             metadata={"stripe_session_id": order.stripe_session_id},
         )
     db.commit()
+
+    if communication_id:
+        enqueue_communication_after_commit(
+            db,
+            communication_id=communication_id,
+            order_id=order.id,
+            actor="admin",
+        )
 
     return AdminStripeSyncOut(
         order_id=order.id,
@@ -2157,11 +2216,12 @@ def reconcile_stale_stripe_orders(
     checked = 0
     updated = 0
     failures = 0
+    communications_to_enqueue: list[tuple[int, int]] = []
     for order in orders:
         checked += 1
         try:
             session = _stripe_session_dict(stripe.checkout.Session.retrieve(order.stripe_session_id))
-            store_stripe_event(
+            stored = store_stripe_event(
                 db,
                 {
                     "id": f"manual_reconcile_{order.id}_{uuid.uuid4()}",
@@ -2171,8 +2231,13 @@ def reconcile_stale_stripe_orders(
                     "data": {"object": session},
                 },
             )
-            if _apply_stripe_session_to_order(order, session, db, actor="admin"):
+            changed, communication_id = _apply_stripe_session_to_order(order, session, db, actor="admin")
+            stored.processing_status = "PROCESSED"
+            stored.error_message = None
+            if changed:
                 updated += 1
+            if communication_id:
+                communications_to_enqueue.append((communication_id, order.id))
         except Exception as exc:
             failures += 1
             record_order_activity(
@@ -2185,6 +2250,13 @@ def reconcile_stale_stripe_orders(
             )
 
     db.commit()
+    for communication_id, order_id in communications_to_enqueue:
+        enqueue_communication_after_commit(
+            db,
+            communication_id=communication_id,
+            order_id=order_id,
+            actor="admin",
+        )
     return AdminStripeSyncOut(
         status="completed" if failures == 0 else "partial",
         message=f"Checked {checked} stale pending order(s); updated {updated}; failures {failures}.",

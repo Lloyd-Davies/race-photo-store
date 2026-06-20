@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -566,6 +566,44 @@ def test_admin_metrics_event_filter_and_missing_event(admin_client, db_session, 
     assert missing.status_code == 404
 
 
+def test_admin_metrics_reports_stripe_webhook_health(admin_client, db_session, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import StripeEvent
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_health_test")
+    db_session.add_all([
+        StripeEvent(
+            stripe_event_id="evt_health_processed",
+            event_type="checkout.session.completed",
+            livemode=True,
+            payload_json={},
+            processing_status="PROCESSED",
+        ),
+        StripeEvent(
+            stripe_event_id="evt_health_ignored",
+            event_type="customer.created",
+            livemode=True,
+            payload_json={},
+            processing_status="IGNORED",
+        ),
+    ])
+    db_session.commit()
+
+    resp = admin_client.get("/api/admin/metrics?range=all")
+
+    assert resp.status_code == 200
+    health = resp.json()["stripe_webhook_health"]
+    assert health["secret_configured"] is True
+    assert health["last_valid_event_at"] is not None
+    assert health["last_event_type"] in {
+        "checkout.session.completed",
+        "customer.created",
+    }
+    assert health["valid_events_24h"] == 2
+    assert health["processed_events_24h"] == 1
+    assert health["ignored_events_24h"] == 1
+
+
 def test_admin_list_orders_filters_paginates_and_searches_in_db(admin_client, db_session, test_photos):
     order = _create_ready_order_with_delivery(db_session, test_photos)
 
@@ -654,6 +692,98 @@ def test_admin_stripe_sync_marks_pending_order_ready(
     assert order.status == OrderStatus.READY
     assert order.stripe_payment_intent_id == "pi_sync"
     assert db_session.query(Delivery).filter(Delivery.order_id == order.id).first() is not None
+
+
+def test_admin_stripe_sync_email_enqueue_failure_keeps_order_ready(
+    admin_client, db_session, test_photos, mock_celery_send_task, monkeypatch
+):
+    from unittest.mock import patch
+    from photostore.config import settings
+    from photostore.models import (
+        Communication,
+        CommunicationStatus,
+        Order,
+        OrderActivity,
+        OrderItem,
+        OrderStatus,
+    )
+
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_fake")
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    mock_celery_send_task.side_effect = RuntimeError("broker unavailable")
+    order = Order(
+        stripe_session_id="cs_test_sync_queue_failure",
+        email="runner@example.com",
+        status=OrderStatus.PENDING,
+    )
+    db_session.add(order)
+    db_session.flush()
+    for photo in test_photos:
+        db_session.add(OrderItem(order_id=order.id, photo_id=photo.id, unit_price_pence=500))
+    db_session.commit()
+
+    with patch("app.routes.admin.stripe.checkout.Session.retrieve", return_value={
+        "id": order.stripe_session_id,
+        "status": "complete",
+        "payment_status": "paid",
+        "payment_intent": "pi_sync_queue_failure",
+        "customer_email": order.email,
+    }):
+        resp = admin_client.post(f"/api/admin/orders/{order.id}/stripe-sync")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "updated"
+    db_session.refresh(order)
+    assert order.status == OrderStatus.READY
+    communication = db_session.query(Communication).filter(
+        Communication.order_id == order.id
+    ).one()
+    assert communication.status == CommunicationStatus.FAILED
+    assert db_session.query(OrderActivity).filter(
+        OrderActivity.order_id == order.id,
+        OrderActivity.action == "EMAIL_QUEUE_FAILED",
+    ).count() == 1
+
+
+def test_admin_stripe_reconcile_email_enqueue_failure_keeps_order_ready(
+    admin_client, db_session, test_photos, mock_celery_send_task, monkeypatch
+):
+    from unittest.mock import patch
+    from photostore.config import settings
+    from photostore.models import Communication, CommunicationStatus, Order, OrderItem, OrderStatus
+
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_fake")
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    mock_celery_send_task.side_effect = RuntimeError("broker unavailable")
+    order = Order(
+        stripe_session_id="cs_test_reconcile_queue_failure",
+        email="runner@example.com",
+        status=OrderStatus.PENDING,
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    db_session.add(order)
+    db_session.flush()
+    for photo in test_photos:
+        db_session.add(OrderItem(order_id=order.id, photo_id=photo.id, unit_price_pence=500))
+    db_session.commit()
+
+    with patch("app.routes.admin.stripe.checkout.Session.retrieve", return_value={
+        "id": order.stripe_session_id,
+        "status": "complete",
+        "payment_status": "paid",
+        "payment_intent": "pi_reconcile_queue_failure",
+        "customer_email": order.email,
+    }):
+        resp = admin_client.post("/api/admin/stripe/reconcile")
+
+    assert resp.status_code == 200
+    assert resp.json()["orders_updated"] == 1
+    db_session.refresh(order)
+    assert order.status == OrderStatus.READY
+    communication = db_session.query(Communication).filter(
+        Communication.order_id == order.id
+    ).one()
+    assert communication.status == CommunicationStatus.FAILED
 
 
 def test_admin_stripe_reconcile_unconfigured_returns_status(admin_client):

@@ -1,7 +1,22 @@
 import json
+import hashlib
+import hmac
+import time
 from unittest.mock import call, patch
 
 import stripe
+
+
+def _post_signed_event(client, payload: dict, secret: str):
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signed_payload = f"{timestamp}.".encode() + body
+    signature = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    return client.post(
+        "/api/stripe/webhook",
+        content=body,
+        headers={"stripe-signature": f"t={timestamp},v1={signature}"},
+    )
 
 
 def _make_order(db_session, test_photos):
@@ -29,6 +44,164 @@ def _make_order(db_session, test_photos):
 def test_webhook_stripe_not_configured(client):
     resp = client.post("/api/stripe/webhook", content=b"{}")
     assert resp.status_code == 503
+
+
+def test_webhook_accepts_realistically_signed_payload(client, db_session, test_photos, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import OrderStatus, StripeEvent
+
+    secret = "whsec_signed_test"
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", secret)
+    order = _make_order(db_session, test_photos)
+    payload = {
+        "id": "evt_signed_valid",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "created": int(time.time()),
+        "livemode": True,
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "object": "checkout.session",
+            "payment_intent": "pi_signed_valid",
+            "payment_status": "paid",
+            "customer_email": order.email,
+            "metadata": {"order_id": str(order.id)},
+        }},
+    }
+
+    resp = _post_signed_event(client, payload, secret)
+    duplicate = _post_signed_event(client, payload, secret)
+
+    assert resp.status_code == 200
+    assert duplicate.status_code == 200
+    db_session.refresh(order)
+    assert order.status == OrderStatus.READY
+    stored = db_session.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == payload["id"]
+    ).one()
+    assert stored.processing_status == "PROCESSED"
+    assert db_session.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == payload["id"]
+    ).count() == 1
+
+
+def test_webhook_retries_previously_failed_stored_event(
+    client, db_session, test_photos, monkeypatch
+):
+    from photostore.config import settings
+    from photostore.models import OrderStatus, StripeEvent
+
+    secret = "whsec_retry_failed"
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", secret)
+    order = _make_order(db_session, test_photos)
+    payload = {
+        "id": "evt_retry_failed",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "created": int(time.time()),
+        "livemode": True,
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "object": "checkout.session",
+            "payment_intent": "pi_retry_failed",
+            "payment_status": "paid",
+            "customer_email": order.email,
+        }},
+    }
+    db_session.add(StripeEvent(
+        stripe_event_id=payload["id"],
+        event_type=payload["type"],
+        order_id=order.id,
+        stripe_session_id=order.stripe_session_id,
+        livemode=True,
+        payload_json=payload,
+        processing_status="FAILED",
+        error_message="RuntimeError",
+    ))
+    db_session.commit()
+
+    resp = _post_signed_event(client, payload, secret)
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert order.status == OrderStatus.READY
+    stored = db_session.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == payload["id"]
+    ).one()
+    assert stored.processing_status == "PROCESSED"
+    assert stored.error_message is None
+
+
+def test_webhook_rejects_payload_signed_with_wrong_secret(client, db_session, test_photos, monkeypatch):
+    from photostore.config import settings
+    from photostore.models import OrderStatus, StripeEvent
+
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_expected")
+    order = _make_order(db_session, test_photos)
+    payload = {
+        "id": "evt_signed_wrong",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "created": int(time.time()),
+        "data": {"object": {"id": order.stripe_session_id}},
+    }
+
+    resp = _post_signed_event(client, payload, "whsec_wrong")
+
+    assert resp.status_code == 400
+    db_session.refresh(order)
+    assert order.status == OrderStatus.PENDING
+    assert db_session.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == payload["id"]
+    ).count() == 0
+
+
+def test_webhook_email_enqueue_failure_keeps_order_fulfilled(
+    client,
+    db_session,
+    test_photos,
+    mock_celery_send_task,
+    monkeypatch,
+):
+    from photostore.config import settings
+    from photostore.models import Communication, CommunicationStatus, OrderActivity, OrderStatus
+
+    secret = "whsec_queue_failure"
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", secret)
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    mock_celery_send_task.side_effect = RuntimeError("broker unavailable with private details")
+    order = _make_order(db_session, test_photos)
+    payload = {
+        "id": "evt_queue_failure",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "created": int(time.time()),
+        "livemode": True,
+        "data": {"object": {
+            "id": order.stripe_session_id,
+            "object": "checkout.session",
+            "payment_intent": "pi_queue_failure",
+            "payment_status": "paid",
+            "customer_email": order.email,
+        }},
+    }
+
+    resp = _post_signed_event(client, payload, secret)
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert order.status == OrderStatus.READY
+    communication = db_session.query(Communication).filter(
+        Communication.order_id == order.id
+    ).one()
+    assert communication.status == CommunicationStatus.FAILED
+    assert communication.error_message == "Email task could not be queued; retry from admin."
+    assert "private details" not in communication.error_message
+    activity = db_session.query(OrderActivity).filter(
+        OrderActivity.order_id == order.id,
+        OrderActivity.action == "EMAIL_QUEUE_FAILED",
+    ).one()
+    assert activity.metadata_json["error_type"] == "RuntimeError"
 
 
 def test_webhook_fulfills_order(client, db_session, test_photos, mock_celery_send_task, monkeypatch):
