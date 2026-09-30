@@ -6,6 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from photostore.models import (
+    AssetMigrationStatus,
+    AssetType,
     CommunicationKind,
     CommunicationStatus,
     DeliveryZipStatus,
@@ -57,6 +59,8 @@ class PhotoOut(BaseModel):
     photo_id: str
     proof_url: str
     captured_at: Optional[datetime] = None
+    preview_width: Optional[int] = None
+    preview_height: Optional[int] = None
 
 
 class PhotoListOut(BaseModel):
@@ -235,6 +239,24 @@ class PhotoUploadStatusOut(BaseModel):
 
 class PhotoUploadStatusesOut(BaseModel):
     photos: list[PhotoUploadStatusOut]
+
+
+class EventAssetMigrationOut(BaseModel):
+    asset_type: AssetType
+    status: AssetMigrationStatus
+    total_count: int = 0
+    migrated_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class EventAssetMigrationsOut(BaseModel):
+    migrations: list[EventAssetMigrationOut]
 
 
 class DeleteEventResult(BaseModel):

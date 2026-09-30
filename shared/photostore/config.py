@@ -1,3 +1,7 @@
+import ipaddress
+from urllib.parse import urlparse
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +13,8 @@ class Settings(BaseSettings):
     STORAGE_ROOT: str = "/data/photos"
     STORAGE_BACKEND: str = "local"
     ZIP_STORAGE_BACKEND: str = ""
+    PROOF_STORAGE_BACKEND: str = "local"
+    ORIGINAL_STORAGE_BACKEND: str = "local"
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     PUBLIC_BASE_URL: str = ""
@@ -35,7 +41,40 @@ class Settings(BaseSettings):
 
     # ── Branding ──────────────────────────────────────────────────────────────
     SITE_NAME: str = "Race Photos"
-    SITE_TAGLINE: str = "Your race, your photos."
+    SITE_TAGLINE: str = ""
+
+    # Public search/social metadata. This is deliberately separate from
+    # PUBLIC_BASE_URL, which may point at localhost for transactional links in
+    # development. SEO URLs must always remain public, absolute HTTPS URLs.
+    SEO_SITE_URL: str = "https://photos.example.com"
+    SEO_DEFAULT_TITLE: str = "Race Photos | Race and Event Photos"
+    SEO_TITLE_TEMPLATE: str = "{page} | {site_name}"
+    SEO_DEFAULT_DESCRIPTION: str = (
+        "Browse and purchase professional photographs from running, athletics "
+        "and sporting events photographed by Race Photos."
+    )
+    SEO_LOGO_URL: str = "https://photos.example.com/favicon.svg"
+
+    @field_validator(
+        "SEO_SITE_URL",
+        "SEO_LOGO_URL",
+    )
+    @classmethod
+    def validate_public_seo_url(cls, value: str) -> str:
+        cleaned = value.strip().rstrip("/")
+        parsed = urlparse(cleaned)
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not hostname:
+            raise ValueError("SEO URLs must be absolute HTTPS URLs")
+        if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+            raise ValueError("SEO URLs must not use local or internal hostnames")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            address = None
+        if address and not address.is_global:
+            raise ValueError("SEO URLs must not use private or non-global IP addresses")
+        return cleaned
 
     # ── Email ─────────────────────────────────────────────────────────────────
     EMAIL_ENABLED: bool = False

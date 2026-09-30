@@ -1,8 +1,18 @@
 import { useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { ArrowLeft, Play, Upload, CheckCircle2, XCircle } from 'lucide-react'
-import { fetchAdminEvents, ingestPhotos, uploadBibTags, type IngestResult, type BibTagsResult } from '../../api/events'
+import { ArrowLeft, Play, Upload, CheckCircle2, XCircle, CloudUpload } from 'lucide-react'
+import {
+  fetchAdminEvents,
+  fetchEventStorageMigrations,
+  ingestPhotos,
+  startEventStorageMigration,
+  uploadBibTags,
+  type AssetMigrationType,
+  type BibTagsResult,
+  type EventAssetMigration,
+  type IngestResult,
+} from '../../api/events'
 import Button from '../../components/Button'
 
 type BibTagUploadRow = { photo_id: string; bib: string; confidence?: number }
@@ -113,6 +123,12 @@ export default function AdminIngest() {
 
   const { data: events } = useQuery({ queryKey: ['admin-events'], queryFn: fetchAdminEvents })
   const event = events?.find((e) => e.id === id)
+  const migrationsQuery = useQuery({
+    queryKey: ['event-storage-migrations', id],
+    queryFn: () => fetchEventStorageMigrations(id),
+    enabled: Number.isFinite(id),
+    refetchInterval: 3000,
+  })
 
   const ingestMut = useMutation({
     mutationFn: () => ingestPhotos(id),
@@ -131,6 +147,66 @@ export default function AdminIngest() {
     onSuccess: (data) => setBibResult(data),
     onError: (e: Error) => setBibError(e.message),
   })
+
+  const migrationMut = useMutation({
+    mutationFn: (type: 'proofs' | 'originals') => startEventStorageMigration(id, type),
+    onSuccess: () => migrationsQuery.refetch(),
+  })
+
+  const migrationFor = (type: AssetMigrationType): EventAssetMigration | undefined =>
+    migrationsQuery.data?.migrations.find((migration) => migration.asset_type === type)
+  const proofMigration = migrationFor('PROOFS')
+  const originalMigration = migrationFor('ORIGINALS')
+  const migrationActive = migrationMut.isPending
+
+  const renderMigration = (
+    label: string,
+    migration: EventAssetMigration | undefined,
+    type: 'proofs' | 'originals',
+    disabled = false,
+  ) => {
+    const status = migration?.status ?? 'NOT_STARTED'
+    const active = status === 'QUEUED' || status === 'RUNNING'
+    const processed = (migration?.migrated_count ?? 0) + (migration?.skipped_count ?? 0) + (migration?.failed_count ?? 0)
+    const total = migration?.total_count ?? 0
+    const progress = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0
+    const action = status === 'FAILED' ? 'Retry' : status === 'READY' ? 'Run again' : 'Migrate'
+
+    return (
+      <div className="py-4 border-t border-surface-700 first:border-t-0 first:pt-0 last:pb-0">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-100">{label}</span>
+              <span className="text-xs text-gray-400">{status.replace('_', ' ')}</span>
+            </div>
+            {(active || status === 'READY' || status === 'FAILED') && (
+              <p className="text-xs text-gray-400 mt-1">
+                {processed} of {total} checked
+                {(migration?.failed_count ?? 0) > 0 ? `, ${migration?.failed_count} failed` : ''}
+              </p>
+            )}
+            {active && (
+              <div className="h-1.5 bg-surface-700 rounded mt-2 overflow-hidden" aria-label={`${label} migration progress`}>
+                <div className="h-full bg-sky-500 transition-all" style={{ width: `${progress}%` }} />
+              </div>
+            )}
+            {migration?.error && <p className="text-xs text-red-400 mt-2 break-words">{migration.error}</p>}
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={disabled || active || migrationActive}
+            loading={migrationMut.isPending && migrationMut.variables === type}
+            onClick={() => migrationMut.mutate(type)}
+          >
+            <CloudUpload size={14} className="mr-1" />
+            {action}
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-lg">
@@ -175,6 +251,34 @@ export default function AdminIngest() {
           <Play size={14} className="mr-1" />
           Run ingest
         </Button>
+      </section>
+
+      <section className="bg-surface-900 border border-surface-700 rounded-xl p-6 mb-6">
+        <h2 className="font-semibold text-gray-100 mb-1">Object storage migration</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Copy event assets to private object storage. Local files are retained.
+        </p>
+
+        {migrationsQuery.error && (
+          <div className="flex items-center gap-2 text-sm text-red-400 mb-4">
+            <XCircle size={16} />
+            {(migrationsQuery.error as Error).message}
+          </div>
+        )}
+        {migrationMut.error && (
+          <div className="flex items-center gap-2 text-sm text-red-400 mb-4">
+            <XCircle size={16} />
+            {(migrationMut.error as Error).message}
+          </div>
+        )}
+
+        {renderMigration('Proofs', proofMigration, 'proofs')}
+        {renderMigration(
+          'Originals',
+          originalMigration,
+          'originals',
+          proofMigration?.status !== 'READY' || event?.status === 'ARCHIVED',
+        )}
       </section>
 
       {/* --- Bib tags --- */}

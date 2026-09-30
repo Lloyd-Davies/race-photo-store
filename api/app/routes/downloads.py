@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,9 +10,15 @@ from app.deps import get_db
 from app.rate_limit import enforce_rate_limit
 from photostore.config import settings
 from photostore.models import Delivery, DeliveryZipStatus, OrderItem, Photo
-from photostore.storage import InvalidStorageKey, get_zip_storage_backend
+from photostore.storage import (
+    InvalidStorageKey,
+    get_original_storage_backend,
+    get_proof_storage_backend,
+    get_zip_storage_backend,
+)
 
 router = APIRouter(tags=["downloads"])
+logger = logging.getLogger(__name__)
 
 
 def _get_valid_delivery(token: str, db: Session) -> Delivery:
@@ -68,6 +75,45 @@ def _attachment_filename(event_slug: str, photo_id: str) -> str:
     safe_event = event_slug.replace('"', "").replace("/", "-").replace("\\", "-")
     safe_photo = photo_id.replace('"', "").replace("/", "-").replace("\\", "-")
     return f"{safe_event}-{safe_photo}.jpg"
+
+
+def _purchased_asset_response(
+    *,
+    storage,
+    key: str,
+    storage_subdir: str,
+    internal_location: str,
+    disposition: str | None = None,
+    cache_control: str | None = None,
+    missing_detail: str,
+) -> Response:
+    if not storage.is_local:
+        try:
+            if storage.exists(key):
+                return RedirectResponse(
+                    storage.presigned_get_url(
+                        key,
+                        response_content_disposition=disposition,
+                        response_content_type="image/jpeg",
+                    ),
+                    status_code=302,
+                    headers={"Cache-Control": cache_control or "no-store"},
+                )
+        except Exception:
+            logger.warning("Purchased asset R2 read failed; using local fallback", exc_info=True)
+
+    asset_abs, asset_rel = _safe_storage_relative_path(key, storage_subdir)
+    if not asset_abs.exists():
+        raise HTTPException(404, missing_detail)
+    headers = {
+        "X-Accel-Redirect": f"/{internal_location}/{asset_rel.as_posix()}",
+        "Content-Type": "image/jpeg",
+    }
+    if disposition:
+        headers["Content-Disposition"] = disposition
+    if cache_control:
+        headers["Cache-Control"] = cache_control
+    return Response(status_code=200, headers=headers)
 
 
 @router.get("/d/{token}")
@@ -156,21 +202,14 @@ def view_photo(
 
     delivery = _get_valid_delivery(token, db)
     photo = _purchased_photo(delivery, photo_id, db)
-    original_abs, original_rel = _safe_storage_relative_path(photo.original_path, "originals")
-
-    if not original_abs.exists():
-        raise HTTPException(404, "Original image not found")
-
-    return Response(
-        status_code=200,
-        headers={
-            "X-Accel-Redirect": f"/_internal_originals/{original_rel.as_posix()}",
-            "Content-Disposition": (
-                f'inline; filename="{_attachment_filename(delivery.event_slug, photo_id)}"'
-            ),
-            "Content-Type": "image/jpeg",
-            "Cache-Control": "private, max-age=3600",
-        },
+    return _purchased_asset_response(
+        storage=get_original_storage_backend(),
+        key=photo.original_path,
+        storage_subdir="originals",
+        internal_location="_internal_originals",
+        disposition=f'inline; filename="{_attachment_filename(delivery.event_slug, photo_id)}"',
+        cache_control="private, max-age=3600",
+        missing_detail="Original image not found",
     )
 
 
@@ -191,20 +230,13 @@ def download_photo(
 
     delivery = _get_valid_delivery(token, db)
     photo = _purchased_photo(delivery, photo_id, db)
-    original_abs, original_rel = _safe_storage_relative_path(photo.original_path, "originals")
-
-    if not original_abs.exists():
-        raise HTTPException(404, "Original image not found")
-
-    return Response(
-        status_code=200,
-        headers={
-            "X-Accel-Redirect": f"/_internal_originals/{original_rel.as_posix()}",
-            "Content-Disposition": (
-                f'attachment; filename="{_attachment_filename(delivery.event_slug, photo_id)}"'
-            ),
-            "Content-Type": "image/jpeg",
-        },
+    return _purchased_asset_response(
+        storage=get_original_storage_backend(),
+        key=photo.original_path,
+        storage_subdir="originals",
+        internal_location="_internal_originals",
+        disposition=f'attachment; filename="{_attachment_filename(delivery.event_slug, photo_id)}"',
+        missing_detail="Original image not found",
     )
 
 
@@ -225,16 +257,11 @@ def download_photo_proof(
 
     delivery = _get_valid_delivery(token, db)
     photo = _purchased_photo(delivery, photo_id, db)
-    proof_abs, proof_rel = _safe_storage_relative_path(photo.proof_path, "proofs")
-
-    if not proof_abs.exists():
-        raise HTTPException(404, "Proof image not found")
-
-    return Response(
-        status_code=200,
-        headers={
-            "X-Accel-Redirect": f"/_internal_proofs/{proof_rel.as_posix()}",
-            "Content-Type": "image/jpeg",
-            "Cache-Control": "private, max-age=3600",
-        },
+    return _purchased_asset_response(
+        storage=get_proof_storage_backend(),
+        key=photo.proof_path,
+        storage_subdir="proofs",
+        internal_location="_internal_proofs",
+        cache_control="private, max-age=3600",
+        missing_detail="Proof image not found",
     )

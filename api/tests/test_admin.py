@@ -223,6 +223,8 @@ def test_ingest_sets_captured_at_from_exif(admin_client, db_session, test_event,
     photo = db_session.query(Photo).filter(Photo.id == pid).first()
     assert photo is not None
     assert photo.captured_at == datetime(2026, 5, 30, 15, 57, 24, tzinfo=timezone.utc)
+    assert photo.preview_width == 1000
+    assert photo.preview_height == 800
 
 
 def test_update_event_fields(admin_client, db_session, test_event):
@@ -1029,6 +1031,40 @@ def test_delete_event_with_files(admin_client, db_session, test_event, test_phot
     assert not (storage / "covers" / test_event.slug).exists()
 
 
+def test_delete_event_with_files_removes_migrated_r2_assets(
+    admin_client, db_session, test_event, test_photos, tmp_path, monkeypatch
+):
+    from app.routes import admin as admin_module
+    from photostore.config import settings
+    from photostore.models import AssetMigrationStatus, AssetType, EventAssetMigration
+
+    class FakeR2:
+        def __init__(self):
+            self.deleted = []
+
+        def delete(self, key):
+            self.deleted.append(key)
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    r2 = FakeR2()
+    monkeypatch.setattr(admin_module, "R2StorageBackend", lambda: r2)
+    expected_keys = {photo.proof_path for photo in test_photos}
+    db_session.add(EventAssetMigration(
+        event_id=test_event.id,
+        asset_type=AssetType.PROOFS,
+        status=AssetMigrationStatus.READY,
+        skipped_count=len(test_photos),
+    ))
+    db_session.flush()
+
+    response = admin_client.delete(
+        f"/api/admin/events/{test_event.id}?delete_files=true"
+    )
+    assert response.status_code == 200
+    assert set(r2.deleted) == expected_keys
+
+
 def test_delete_event_unknown(admin_client):
     resp = admin_client.delete("/api/admin/events/99999")
     assert resp.status_code == 404
@@ -1082,7 +1118,13 @@ def test_upload_photo_proof_creates_record(admin_client, db_session, test_event,
     storage = tmp_path / "photos"
     monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
 
-    resp = _upload(admin_client, test_event.id, "img_001", "proof")
+    resp = _upload(
+        admin_client,
+        test_event.id,
+        "img_001",
+        "proof",
+        _cover_image_bytes(),
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["photo_id"] == "img_001"
@@ -1093,6 +1135,8 @@ def test_upload_photo_proof_creates_record(admin_client, db_session, test_event,
     photo = db_session.query(Photo).filter(Photo.id == "img_001").first()
     assert photo is not None
     assert photo.proof_path == f"proofs/{test_event.slug}/img_001.jpg"
+    assert photo.preview_width == 1200
+    assert photo.preview_height == 800
     proof_path = storage / "proofs" / test_event.slug / "img_001.jpg"
     assert proof_path.exists()
 
@@ -1118,6 +1162,56 @@ def test_upload_photo_original_creates_record(admin_client, db_session, test_eve
     assert photo.original_path == f"originals/{test_event.slug}/img_002.jpg"
     assert photo.state == PhotoState.READY
     assert (storage / "originals" / test_event.slug / "img_002.jpg").exists()
+
+
+def test_upload_photo_dual_writes_to_r2(
+    admin_client, test_event, tmp_path, monkeypatch
+):
+    from app.routes import admin as admin_module
+    from photostore.config import settings
+
+    class FakeR2:
+        is_local = False
+
+        def __init__(self):
+            self.uploads = []
+
+        def upload_file(self, source, key, content_type=None):
+            self.uploads.append((key, content_type, source.read_bytes()))
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    r2 = FakeR2()
+    monkeypatch.setattr(admin_module, "get_proof_storage_backend", lambda: r2)
+
+    response = _upload(admin_client, test_event.id, "dual_001", "proof")
+    assert response.status_code == 200
+    assert r2.uploads[0][0] == f"proofs/{test_event.slug}/dual_001.jpg"
+    assert r2.uploads[0][1] == "image/jpeg"
+    assert (storage / "proofs" / test_event.slug / "dual_001.jpg").exists()
+
+
+def test_upload_photo_r2_failure_retains_local_copy(
+    admin_client, db_session, test_event, tmp_path, monkeypatch
+):
+    from app.routes import admin as admin_module
+    from photostore.config import settings
+    from photostore.models import Photo
+
+    class FailingR2:
+        is_local = False
+
+        def upload_file(self, source, key, content_type=None):
+            raise RuntimeError("R2 unavailable")
+
+    storage = tmp_path / "photos"
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(storage))
+    monkeypatch.setattr(admin_module, "get_original_storage_backend", lambda: FailingR2())
+
+    response = _upload(admin_client, test_event.id, "dual_fail_001", "original")
+    assert response.status_code == 503
+    assert (storage / "originals" / test_event.slug / "dual_fail_001.jpg").exists()
+    assert db_session.query(Photo).filter(Photo.id == "dual_fail_001").first() is None
 
 
 def test_upload_photo_updates_existing(admin_client, db_session, test_event, test_photos, tmp_path, monkeypatch):

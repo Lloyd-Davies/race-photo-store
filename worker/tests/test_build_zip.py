@@ -219,6 +219,87 @@ def test_build_zip_reads_originals_from_local_storage_even_with_zip_backend(
         assert zf.read("zip-photo-1.jpg") == b"ORIGINAL_zip-photo-1"
 
 
+def test_build_zip_reads_r2_originals_and_cleans_download_cache(
+    db_session, tmp_path, monkeypatch
+):
+    from photostore.config import settings
+
+    class FakeOriginalStorage:
+        is_local = False
+
+        def exists(self, key):
+            return True
+
+        def download_to_file(self, key, destination):
+            destination = Path(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(f"R2_{Path(key).stem}".encode("ascii"))
+
+    class FakeZipStorage:
+        def __init__(self):
+            self.content = None
+
+        def upload_file(self, source, key, content_type=None):
+            self.content = Path(source).read_bytes()
+
+    bz_module = _get_bz_module()
+    storage = tmp_path / "photos"
+    order, _ = _seed(db_session, storage, with_originals=False)
+    zip_storage = FakeZipStorage()
+    _configure_paths(monkeypatch, settings, storage)
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(
+        bz_module,
+        "get_original_storage_backend",
+        lambda: FakeOriginalStorage(),
+    )
+    monkeypatch.setattr(bz_module, "get_zip_storage_backend", lambda: zip_storage)
+
+    _get_build_zip_task().apply(args=[order.id]).get()
+
+    assert zip_storage.content is not None
+    with zipfile.ZipFile(io.BytesIO(zip_storage.content)) as zf:
+        assert zf.read("zip-photo-1.jpg") == b"R2_zip-photo-1"
+    assert not (storage / "cache" / "orders" / str(order.id) / "originals").exists()
+
+
+def test_build_zip_cleans_r2_original_cache_after_failure(
+    db_session, tmp_path, monkeypatch
+):
+    from photostore.config import settings
+
+    class FailingOriginalStorage:
+        is_local = False
+
+        def exists(self, key):
+            return True
+
+        def download_to_file(self, key, destination):
+            if key.endswith("zip-photo-2.jpg"):
+                raise RuntimeError("download failed")
+            destination = Path(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"R2")
+
+    bz_module = _get_bz_module()
+    storage = tmp_path / "photos"
+    order, delivery = _seed(db_session, storage, with_originals=False)
+    _configure_paths(monkeypatch, settings, storage)
+    monkeypatch.setattr(bz_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(
+        bz_module,
+        "get_original_storage_backend",
+        lambda: FailingOriginalStorage(),
+    )
+
+    result = _get_build_zip_task().apply(args=[order.id], throw=False)
+
+    assert result.failed()
+    assert not (storage / "cache" / "orders" / str(order.id) / "originals").exists()
+    db_session.refresh(delivery)
+    assert delivery.zip_status == DeliveryZipStatus.FAILED
+
+
 def test_build_zip_regenerates_existing_zip(db_session, tmp_path, monkeypatch):
     from photostore.config import settings
 

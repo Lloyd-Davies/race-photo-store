@@ -38,7 +38,7 @@ def test_event_cover_fields_and_endpoint(client, db_session, test_event, tmp_pat
     test_event.cover_path = f"covers/{test_event.slug}/cover.jpg"
     test_event.cover_updated_at = updated_at
     db_session.flush()
-    expected_url = f"/api/events/{test_event.slug}/cover?v={int(updated_at.timestamp())}"
+    expected_url = f"/covers/{test_event.slug}.jpg?v={int(updated_at.timestamp())}"
 
     listed = client.get("/api/events")
     assert listed.status_code == 200
@@ -54,6 +54,10 @@ def test_event_cover_fields_and_endpoint(client, db_session, test_event, tmp_pat
     assert cover_resp.status_code == 200
     assert cover_resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/cover.jpg")
     assert cover_resp.headers["Cache-Control"] == "public, max-age=2592000, immutable"
+
+    public_cover = client.get(f"/covers/{test_event.slug}.jpg")
+    assert public_cover.status_code == 200
+    assert public_cover.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/cover.jpg")
 
 
 def test_get_event_by_legacy_id_alias(client, test_event):
@@ -347,6 +351,49 @@ def test_get_event_proof_unlocked_event(client, test_event, test_photos):
     assert "X-Accel-Redirect" in resp.headers
     assert resp.headers["X-Accel-Redirect"].endswith(f"/{test_event.slug}/{photo_id}.jpg")
     assert resp.headers["Cache-Control"] == "no-store"
+
+
+def test_event_proof_redirects_to_private_r2_after_validation(
+    client, test_event, test_photos, monkeypatch
+):
+    from app.routes import events as events_module
+
+    class FakeStorage:
+        is_local = False
+
+        def exists(self, key):
+            return True
+
+        def presigned_get_url(self, key, **kwargs):
+            assert kwargs["response_content_type"] == "image/jpeg"
+            return f"https://r2.example.test/{key}?signed=1"
+
+    monkeypatch.setattr(events_module, "get_proof_storage_backend", lambda: FakeStorage())
+    photo = test_photos[0]
+    response = client.get(
+        f"/api/events/{test_event.slug}/photos/{photo.id}/proof",
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"].endswith(f"{photo.proof_path}?signed=1")
+
+
+def test_event_proof_falls_back_to_local_when_r2_object_missing(
+    client, test_event, test_photos, monkeypatch
+):
+    from app.routes import events as events_module
+
+    class MissingStorage:
+        is_local = False
+
+        def exists(self, key):
+            return False
+
+    monkeypatch.setattr(events_module, "get_proof_storage_backend", lambda: MissingStorage())
+    photo = test_photos[0]
+    response = client.get(f"/proofs/{test_event.slug}/{photo.id}.jpg")
+    assert response.status_code == 200
+    assert "x-accel-redirect" in response.headers
 
 
 def test_get_public_proof_cacheable(client, test_event, test_photos):

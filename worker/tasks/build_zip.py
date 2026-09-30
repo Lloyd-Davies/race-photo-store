@@ -1,4 +1,6 @@
+import shutil
 import zipfile
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -6,9 +8,14 @@ from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderActivity, OrderItem, OrderStatus, Photo
-from photostore.storage import LocalStorageBackend, get_zip_storage_backend
+from photostore.storage import (
+    LocalStorageBackend,
+    get_original_storage_backend,
+    get_zip_storage_backend,
+)
 
 ZIP_ERROR_MAX_LENGTH = 1000
+logger = logging.getLogger(__name__)
 
 
 def _record_zip_failure(db, order_id: int, exc: Exception) -> None:
@@ -71,8 +78,10 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         cache_zip.unlink(missing_ok=True)
 
         source_storage = LocalStorageBackend()
+        original_storage = get_original_storage_backend()
         zip_storage = get_zip_storage_backend()
         zip_key = f"zips/order-{order_id}.zip"
+        downloaded_originals = cache_dir / "originals"
 
         try:
             with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
@@ -81,7 +90,25 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
                     if not photo:
                         raise ValueError(f"Photo record missing for id={photo_id}")
 
-                    original = source_storage.local_path(photo.original_path)
+                    local_original = source_storage.local_path(photo.original_path)
+                    original = local_original
+                    if not original_storage.is_local:
+                        remote_original = downloaded_originals / f"{photo_id}.jpg"
+                        try:
+                            if original_storage.exists(photo.original_path):
+                                original_storage.download_to_file(
+                                    photo.original_path,
+                                    remote_original,
+                                )
+                                original = remote_original
+                        except Exception:
+                            logger.warning(
+                                "Original R2 read failed for %s; using local fallback",
+                                photo.original_path,
+                                exc_info=True,
+                            )
+                            remote_original.unlink(missing_ok=True)
+                            original = local_original
                     if not original.exists():
                         raise FileNotFoundError(
                             f"Original not found: {original}. "
@@ -95,6 +122,7 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         finally:
             tmp_zip.unlink(missing_ok=True)
             cache_zip.unlink(missing_ok=True)
+            shutil.rmtree(downloaded_originals, ignore_errors=True)
 
         now = datetime.now(timezone.utc)
         delivery.zip_path = zip_key

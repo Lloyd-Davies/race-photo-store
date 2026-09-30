@@ -23,6 +23,8 @@ export interface Photo {
   photo_id: string
   proof_url: string
   captured_at?: string
+  preview_width?: number | null
+  preview_height?: number | null
 }
 
 export interface PhotoListResponse {
@@ -86,6 +88,25 @@ export const fetchPhotos = (
   return apiGet<PhotoListResponse>(`/events/${encodeURIComponent(eventRef)}/photos?${params}`, headers)
 }
 
+export type AssetMigrationType = 'PROOFS' | 'ORIGINALS'
+export type AssetMigrationStatus = 'NOT_STARTED' | 'QUEUED' | 'RUNNING' | 'READY' | 'FAILED'
+
+export interface EventAssetMigration {
+  asset_type: AssetMigrationType
+  status: AssetMigrationStatus
+  total_count: number
+  migrated_count: number
+  skipped_count: number
+  failed_count: number
+  started_at?: string | null
+  completed_at?: string | null
+  error?: string | null
+}
+
+export interface EventAssetMigrations {
+  migrations: EventAssetMigration[]
+}
+
 export const unlockEvent = (eventRef: string, secret: string) =>
   apiPost<EventUnlockResponse>(`/events/${encodeURIComponent(eventRef)}/unlock`, { secret })
 
@@ -130,6 +151,14 @@ export const clearEventCover = (eventId: number) =>
 
 export const ingestPhotos = (eventId: number) =>
   apiPost<IngestResult>(`/admin/events/${eventId}/ingest`)
+
+export const fetchEventStorageMigrations = (eventId: number) =>
+  apiGet<EventAssetMigrations>(`/admin/events/${eventId}/storage-migrations`)
+
+export const startEventStorageMigration = (
+  eventId: number,
+  type: 'proofs' | 'originals',
+) => apiPost<EventAssetMigration>(`/admin/events/${eventId}/storage-migrations/${type}`)
 
 export const uploadBibTags = (eventId: number, tags: { photo_id: string; bib: string; confidence?: number }[]) =>
   apiPost<BibTagsResult>(`/admin/events/${eventId}/tags/bibs`, { tags })

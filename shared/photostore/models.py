@@ -62,6 +62,19 @@ class DeliveryZipStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
+class AssetType(str, enum.Enum):
+    PROOFS = "PROOFS"
+    ORIGINALS = "ORIGINALS"
+
+
+class AssetMigrationStatus(str, enum.Enum):
+    NOT_STARTED = "NOT_STARTED"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -87,6 +100,37 @@ class Event(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     photos = relationship("Photo", back_populates="event")
+    asset_migrations = relationship(
+        "EventAssetMigration",
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
+
+
+class EventAssetMigration(Base):
+    __tablename__ = "event_asset_migrations"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    asset_type = Column(Enum(AssetType), nullable=False)
+    status = Column(
+        Enum(AssetMigrationStatus),
+        nullable=False,
+        default=AssetMigrationStatus.NOT_STARTED,
+    )
+    total_count = Column(Integer, nullable=False, default=0)
+    migrated_count = Column(Integer, nullable=False, default=0)
+    skipped_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    error = Column(String(1000))
+
+    event = relationship("Event", back_populates="asset_migrations")
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "asset_type", name="uq_event_asset_migrations_event_type"),
+    )
 
 
 class Photo(Base):
@@ -99,6 +143,8 @@ class Photo(Base):
     proof_path = Column(String, nullable=False)      # e.g. proofs/<slug>/<id>.jpg
     original_path = Column(String, nullable=False)   # e.g. originals/<slug>/<id>.jpg
     state = Column(Enum(PhotoState), nullable=False, default=PhotoState.READY)
+    preview_width = Column(Integer)
+    preview_height = Column(Integer)
 
     event = relationship("Event", back_populates="photos")
     tags = relationship("PhotoTag", back_populates="photo")

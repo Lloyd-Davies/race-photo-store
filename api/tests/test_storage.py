@@ -39,3 +39,17 @@ def test_zip_storage_backend_overrides_legacy_storage_backend(monkeypatch):
 
     assert storage.get_zip_storage_backend_name() == "local"
     assert isinstance(backend, storage.LocalStorageBackend)
+
+
+def test_proof_and_original_storage_backends_are_independent(monkeypatch):
+    storage = _storage_module()
+    from photostore.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "r2")
+    monkeypatch.setattr(settings, "PROOF_STORAGE_BACKEND", "local")
+    monkeypatch.setattr(settings, "ORIGINAL_STORAGE_BACKEND", "local")
+
+    assert storage.get_proof_storage_backend_name() == "local"
+    assert storage.get_original_storage_backend_name() == "local"
+    assert isinstance(storage.get_proof_storage_backend(), storage.LocalStorageBackend)
+    assert isinstance(storage.get_original_storage_backend(), storage.LocalStorageBackend)

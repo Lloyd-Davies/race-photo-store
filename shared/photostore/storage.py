@@ -224,3 +224,19 @@ def get_zip_storage_backend_name() -> str:
 
 def get_zip_storage_backend() -> StorageBackend:
     return _storage_backend_for_name(get_zip_storage_backend_name())
+
+
+def get_proof_storage_backend_name() -> str:
+    return (settings.PROOF_STORAGE_BACKEND.strip() or "local").lower()
+
+
+def get_proof_storage_backend() -> StorageBackend:
+    return _storage_backend_for_name(get_proof_storage_backend_name())
+
+
+def get_original_storage_backend_name() -> str:
+    return (settings.ORIGINAL_STORAGE_BACKEND.strip() or "local").lower()
+
+
+def get_original_storage_backend() -> StorageBackend:
+    return _storage_backend_for_name(get_original_storage_backend_name())

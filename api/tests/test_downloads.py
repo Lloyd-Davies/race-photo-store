@@ -72,6 +72,21 @@ def _setup_photo_delivery(
     return delivery, purchased
 
 
+class _FakeAssetStorage:
+    is_local = False
+
+    def __init__(self, exists=True):
+        self.object_exists = exists
+        self.calls = []
+
+    def exists(self, key):
+        return self.object_exists
+
+    def presigned_get_url(self, key, **kwargs):
+        self.calls.append((key, kwargs))
+        return f"https://r2.example.test/{key}?signed=1"
+
+
 def test_download_returns_accel_redirect(client, db_session, tmp_path, monkeypatch):
     from photostore.config import settings
     monkeypatch.setattr(settings, "STORAGE_ROOT", str(tmp_path))
@@ -150,6 +165,47 @@ def test_download_redirects_to_presigned_url_for_r2_backend(
     assert storage.content_type == "application/zip"
     db_session.refresh(delivery)
     assert delivery.download_count == 1
+
+
+def test_purchased_original_view_and_download_use_private_r2(
+    client, db_session, test_photos, monkeypatch
+):
+    from app.routes import downloads as downloads_module
+
+    storage = _FakeAssetStorage()
+    monkeypatch.setattr(downloads_module, "get_original_storage_backend", lambda: storage)
+    delivery, purchased = _setup_photo_delivery(db_session, test_photos)
+    photo = purchased[0]
+
+    viewed = client.get(
+        f"/d/{delivery.token}/photos/{photo.id}/view",
+        follow_redirects=False,
+    )
+    downloaded = client.get(
+        f"/d/{delivery.token}/photos/{photo.id}",
+        follow_redirects=False,
+    )
+
+    assert viewed.status_code == 302
+    assert downloaded.status_code == 302
+    assert storage.calls[0][1]["response_content_disposition"].startswith("inline;")
+    assert storage.calls[1][1]["response_content_disposition"].startswith("attachment;")
+
+
+def test_purchased_original_r2_missing_falls_back_local(
+    client, db_session, test_photos, monkeypatch
+):
+    from app.routes import downloads as downloads_module
+
+    monkeypatch.setattr(
+        downloads_module,
+        "get_original_storage_backend",
+        lambda: _FakeAssetStorage(exists=False),
+    )
+    delivery, purchased = _setup_photo_delivery(db_session, test_photos)
+    response = client.get(f"/d/{delivery.token}/photos/{purchased[0].id}/view")
+    assert response.status_code == 200
+    assert "x-accel-redirect" in response.headers
 
 
 def test_download_missing_r2_zip_marks_expired_without_incrementing(

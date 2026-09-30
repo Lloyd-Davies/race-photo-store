@@ -1,10 +1,11 @@
 import math
+import logging
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import cast, Time, func, or_
 
@@ -15,9 +16,11 @@ from app.schemas import EventOut, EventUnlockOut, EventUnlockRequest, PhotoListO
 from photostore.config import settings
 from photostore.models import Event, EventStatus, Photo, PhotoTag
 from photostore.pricing import effective_photo_price_pence, get_app_settings
+from photostore.storage import R2StorageBackend, get_proof_storage_backend
 
 router = APIRouter(prefix="/api", tags=["events"])
 public_router = APIRouter(tags=["events"])
+logger = logging.getLogger(__name__)
 
 PUBLIC_PROOF_CACHE_CONTROL = "public, max-age=2592000, immutable"
 LEGACY_PROOF_CACHE_CONTROL = "no-store"
@@ -43,7 +46,7 @@ def _event_out(event: Event, app_settings) -> EventOut:
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
             version = f"?v={int(updated_at.timestamp())}"
-        cover_url = f"/api/events/{event.slug}/cover{version}"
+        cover_url = f"/covers/{event.slug}.jpg{version}"
 
     return EventOut(
         id=event.id,
@@ -95,6 +98,20 @@ def _proof_accel_path(photo: Photo) -> tuple[Path, str]:
 
 
 def _photo_proof_response(photo: Photo, cache_control: str) -> Response:
+    storage = get_proof_storage_backend()
+    if not storage.is_local:
+        try:
+            if storage.exists(photo.proof_path):
+                return RedirectResponse(
+                    storage.presigned_get_url(
+                        photo.proof_path,
+                        response_content_type="image/jpeg",
+                    ),
+                    status_code=302,
+                    headers={"Cache-Control": "private, no-store"},
+                )
+        except Exception:
+            logger.warning("Proof R2 read failed; using local fallback", exc_info=True)
     _, accel_path = _proof_accel_path(photo)
     return Response(
         status_code=200,
@@ -104,6 +121,33 @@ def _photo_proof_response(photo: Photo, cache_control: str) -> Response:
             "Cache-Control": cache_control,
         },
     )
+
+
+def _public_photo_proof_response(photo: Photo) -> Response:
+    """Serve a crawlable preview without revealing an expiring signed URL."""
+    storage = get_proof_storage_backend()
+    if storage.is_local:
+        return _photo_proof_response(photo, PUBLIC_PROOF_CACHE_CONTROL)
+
+    if not isinstance(storage, R2StorageBackend):
+        return _photo_proof_response(photo, PUBLIC_PROOF_CACHE_CONTROL)
+    try:
+        if not storage.exists(photo.proof_path):
+            return _photo_proof_response(photo, PUBLIC_PROOF_CACHE_CONTROL)
+        source = storage.client.get_object(
+            Bucket=storage.bucket,
+            Key=photo.proof_path.strip("/"),
+        )["Body"]
+        return StreamingResponse(
+            source.iter_chunks(chunk_size=256 * 1024),
+            media_type="image/jpeg",
+            headers={"Cache-Control": PUBLIC_PROOF_CACHE_CONTROL},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Public proof R2 read failed")
+        raise HTTPException(503, "Proof image temporarily unavailable")
 
 
 def _event_cover_response(event: Event) -> Response:
@@ -221,6 +265,8 @@ def list_photos(
                     else f"/proofs/{event.slug}/{p.id}.jpg"
                 ),
                 captured_at=p.captured_at,
+                preview_width=p.preview_width,
+                preview_height=p.preview_height,
             )
             for p in photos
         ],
@@ -317,4 +363,15 @@ def get_public_proof(
     if not photo:
         raise HTTPException(404, "Proof image not found")
 
-    return _photo_proof_response(photo, PUBLIC_PROOF_CACHE_CONTROL)
+    return _public_photo_proof_response(photo)
+
+
+@public_router.get("/covers/{event_ref}.jpg")
+def get_public_event_cover(
+    event_ref: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    event = _resolve_visible_event_ref(event_ref, db)
+    if not event or event.is_password_protected:
+        raise HTTPException(404, "Cover image not found")
+    return _event_cover_response(event)

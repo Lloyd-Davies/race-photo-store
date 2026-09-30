@@ -64,6 +64,8 @@ from app.schemas import (
     PhotoUploadStatusOut,
     PhotoUploadResult,
     EventCreatedOut,
+    EventAssetMigrationOut,
+    EventAssetMigrationsOut,
     IngestResult,
     UpdateEventRequest,
 )
@@ -72,12 +74,21 @@ from photostore.config import settings
 from photostore.delivery import ensure_delivery_for_order
 from photostore.email_provider import EmailMessage, ProviderError, get_provider
 from photostore.models import (
+    AssetMigrationStatus,
+    AssetType,
     Cart, Communication, CommunicationKind, CommunicationStatus,
-    Delivery, DeliveryZipStatus, Event, EventStatus, Order, OrderItem, OrderStatus,
+    Delivery, DeliveryZipStatus, Event, EventAssetMigration, EventStatus,
+    Order, OrderItem, OrderStatus,
     OrderActivity, OrderDiscount, OrderRefund, Photo, PhotoState, PhotoTag, StripeEvent,
 )
 from photostore.pricing import effective_photo_price_pence, get_app_settings, normalize_currency
-from photostore.storage import get_zip_storage_backend, get_zip_storage_backend_name
+from photostore.storage import (
+    R2StorageBackend,
+    get_original_storage_backend,
+    get_proof_storage_backend,
+    get_zip_storage_backend,
+    get_zip_storage_backend_name,
+)
 from app.fulfillment import mark_order_ready
 from app.order_activity import record_order_activity
 from app.stripe_event_store import store_stripe_event
@@ -183,6 +194,23 @@ def _extract_captured_at(image_path: Path) -> datetime | None:
         return captured.replace(tzinfo=tz).astimezone(timezone.utc)
     except Exception:
         return None
+
+
+def _extract_image_dimensions(image_path: Path) -> tuple[int | None, int | None]:
+    """Return display-oriented dimensions for a stored preview image."""
+    if not image_path.exists():
+        return None, None
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(image_path) as image:
+            oriented = ImageOps.exif_transpose(image)
+            width, height = oriented.size
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+    return None, None
 
 
 def _order_subtotal_pence(order: Order) -> int:
@@ -1483,6 +1511,133 @@ def get_photo_upload_status(
     return PhotoUploadStatusesOut(photos=statuses)
 
 
+def _migration_out(
+    asset_type: AssetType,
+    migration: EventAssetMigration | None,
+) -> EventAssetMigrationOut:
+    if migration is None:
+        return EventAssetMigrationOut(
+            asset_type=asset_type,
+            status=AssetMigrationStatus.NOT_STARTED,
+        )
+    return EventAssetMigrationOut.model_validate(migration)
+
+
+@router.get(
+    "/events/{event_id}/storage-migrations",
+    response_model=EventAssetMigrationsOut,
+    dependencies=[Depends(require_admin)],
+)
+def get_event_storage_migrations(
+    event_id: int,
+    db: Session = Depends(get_db),
+) -> EventAssetMigrationsOut:
+    if not db.query(Event.id).filter(Event.id == event_id).first():
+        raise HTTPException(404, "Event not found")
+    records = {
+        row.asset_type: row
+        for row in db.query(EventAssetMigration).filter(
+            EventAssetMigration.event_id == event_id
+        ).all()
+    }
+    return EventAssetMigrationsOut(
+        migrations=[
+            _migration_out(asset_type, records.get(asset_type))
+            for asset_type in (AssetType.PROOFS, AssetType.ORIGINALS)
+        ]
+    )
+
+
+def _queue_asset_migration(
+    event_id: int,
+    asset_type: AssetType,
+    db: Session,
+) -> EventAssetMigrationOut:
+    event = db.query(Event).filter(Event.id == event_id).with_for_update().first()
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    migration = (
+        db.query(EventAssetMigration)
+        .filter(
+            EventAssetMigration.event_id == event_id,
+            EventAssetMigration.asset_type == asset_type,
+        )
+        .with_for_update()
+        .first()
+    )
+    if migration and migration.status in {
+        AssetMigrationStatus.QUEUED,
+        AssetMigrationStatus.RUNNING,
+    }:
+        raise HTTPException(409, f"{asset_type.value.title()} migration is already active")
+
+    if asset_type == AssetType.ORIGINALS:
+        proof_migration = (
+            db.query(EventAssetMigration)
+            .filter(
+                EventAssetMigration.event_id == event_id,
+                EventAssetMigration.asset_type == AssetType.PROOFS,
+            )
+            .first()
+        )
+        if not proof_migration or proof_migration.status != AssetMigrationStatus.READY:
+            raise HTTPException(409, "Proof migration must be ready before originals")
+        if event.status == EventStatus.ARCHIVED:
+            raise HTTPException(409, "Restore this event before migrating originals")
+
+    if migration is None:
+        migration = EventAssetMigration(event_id=event_id, asset_type=asset_type)
+        db.add(migration)
+    migration.status = AssetMigrationStatus.QUEUED
+    migration.total_count = db.query(Photo).filter(Photo.event_id == event_id).count()
+    migration.migrated_count = 0
+    migration.skipped_count = 0
+    migration.failed_count = 0
+    migration.started_at = None
+    migration.completed_at = None
+    migration.error = None
+    db.commit()
+    db.refresh(migration)
+
+    try:
+        celery_app.send_task(
+            "tasks.migrate_event_assets.migrate_event_assets",
+            args=[event_id, asset_type.value],
+        )
+    except Exception as exc:
+        migration.status = AssetMigrationStatus.FAILED
+        migration.completed_at = datetime.now(timezone.utc)
+        migration.error = str(exc)[:1000]
+        db.commit()
+        raise HTTPException(503, "Could not queue storage migration")
+    return EventAssetMigrationOut.model_validate(migration)
+
+
+@router.post(
+    "/events/{event_id}/storage-migrations/proofs",
+    response_model=EventAssetMigrationOut,
+    dependencies=[Depends(require_admin)],
+)
+def queue_proof_storage_migration(
+    event_id: int,
+    db: Session = Depends(get_db),
+) -> EventAssetMigrationOut:
+    return _queue_asset_migration(event_id, AssetType.PROOFS, db)
+
+
+@router.post(
+    "/events/{event_id}/storage-migrations/originals",
+    response_model=EventAssetMigrationOut,
+    dependencies=[Depends(require_admin)],
+)
+def queue_original_storage_migration(
+    event_id: int,
+    db: Session = Depends(get_db),
+) -> EventAssetMigrationOut:
+    return _queue_asset_migration(event_id, AssetType.ORIGINALS, db)
+
+
 @router.put(
     "/events/{event_id}/cover",
     response_model=EventCreatedOut,
@@ -1574,6 +1729,33 @@ def delete_event(
             },
         )
 
+    photos = db.query(Photo).filter(Photo.event_id == event_id).all()
+    migrations = {
+        row.asset_type: row
+        for row in db.query(EventAssetMigration).filter(
+            EventAssetMigration.event_id == event_id
+        ).all()
+    }
+    if delete_files:
+        r2_storage = None
+        for asset_type, path_attr in (
+            (AssetType.PROOFS, "proof_path"),
+            (AssetType.ORIGINALS, "original_path"),
+        ):
+            migration = migrations.get(asset_type)
+            if not migration or (
+                migration.migrated_count == 0
+                and migration.skipped_count == 0
+                and migration.status != AssetMigrationStatus.READY
+            ):
+                continue
+            try:
+                r2_storage = r2_storage or R2StorageBackend()
+                for photo in photos:
+                    r2_storage.delete(getattr(photo, path_attr))
+            except Exception as exc:
+                raise HTTPException(503, f"Could not delete migrated R2 {asset_type.value.lower()}: {exc}")
+
     if delete_files:
         _delete_cover_file(event)
     event.cover_path = None
@@ -1595,6 +1777,9 @@ def delete_event(
     db.query(Cart).filter(Cart.event_id == event_id).delete(synchronize_session="fetch")
 
     photos_deleted = db.query(Photo).filter(Photo.event_id == event_id).delete(synchronize_session="fetch")
+    db.query(EventAssetMigration).filter(
+        EventAssetMigration.event_id == event_id
+    ).delete(synchronize_session="fetch")
     db.delete(event)
     db.commit()
 
@@ -1649,7 +1834,12 @@ def ingest_photos(event_id: int, db: Session = Depends(get_db)) -> IngestResult:
     for filepath in sorted(proofs_dir.glob("*.jpg")):
         photo_id = filepath.stem
 
-        if db.query(Photo).filter(Photo.id == photo_id).first():
+        existing = db.query(Photo).filter(Photo.id == photo_id).first()
+        if existing:
+            if not existing.preview_width or not existing.preview_height:
+                width, height = _extract_image_dimensions(filepath)
+                existing.preview_width = width
+                existing.preview_height = height
             skipped += 1
             continue
 
@@ -1658,6 +1848,7 @@ def ingest_photos(event_id: int, db: Session = Depends(get_db)) -> IngestResult:
         captured_at = _extract_captured_at(original)
         if captured_at is None:
             captured_at = _extract_captured_at(filepath)
+        preview_width, preview_height = _extract_image_dimensions(filepath)
 
         db.add(
             Photo(
@@ -1667,6 +1858,8 @@ def ingest_photos(event_id: int, db: Session = Depends(get_db)) -> IngestResult:
                 proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
                 original_path=f"originals/{event.slug}/{photo_id}.jpg",
                 state=state,
+                preview_width=preview_width,
+                preview_height=preview_height,
             )
         )
         ingested += 1
@@ -1818,17 +2011,35 @@ def upload_photo(
         Path(tmp.name).unlink(missing_ok=True)
         raise
 
+    object_key = f"{kind}s/{event.slug}/{photo_id}.jpg"
+    asset_storage = (
+        get_proof_storage_backend() if kind == "proof" else get_original_storage_backend()
+    )
+    if not asset_storage.is_local:
+        try:
+            asset_storage.upload_file(dest_path, object_key, content_type="image/jpeg")
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                f"Local upload retained; retry the {kind} upload after R2 recovers: {exc}",
+            )
+
     if kind == "proof":
+        preview_width, preview_height = _extract_image_dimensions(dest_path)
         if existing is None:
             db.add(Photo(
                 id=photo_id,
                 event_id=event_id,
-                proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
+                proof_path=object_key,
                 original_path=f"originals/{event.slug}/{photo_id}.jpg",
                 state=PhotoState.MISSING,
+                preview_width=preview_width,
+                preview_height=preview_height,
             ))
         else:
-            existing.proof_path = f"proofs/{event.slug}/{photo_id}.jpg"
+            existing.proof_path = object_key
+            existing.preview_width = preview_width
+            existing.preview_height = preview_height
     else:  # original
         captured_at = _extract_captured_at(dest_path)
         if existing is None:
@@ -1837,11 +2048,11 @@ def upload_photo(
                 event_id=event_id,
                 captured_at=captured_at,
                 proof_path=f"proofs/{event.slug}/{photo_id}.jpg",
-                original_path=f"originals/{event.slug}/{photo_id}.jpg",
+                original_path=object_key,
                 state=PhotoState.READY,
             ))
         else:
-            existing.original_path = f"originals/{event.slug}/{photo_id}.jpg"
+            existing.original_path = object_key
             existing.state = PhotoState.READY
             if captured_at:
                 existing.captured_at = captured_at
