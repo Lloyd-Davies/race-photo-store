@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+WORKDIR /workspace
+COPY shared/ ./shared/
+COPY api/requirements*.txt ./api/
+COPY worker/requirements*.txt ./worker/
+RUN pip install --no-cache-dir -e shared -r api/requirements.txt -r api/requirements-test.txt -r worker/requirements.txt -r worker/requirements-test.txt
+COPY api/ ./api/
+COPY worker/ ./worker/
+COPY nginx/nginx.conf ./nginx/nginx.conf
+ENV PYTHONPATH=/workspace/api:/workspace/worker:/workspace/shared
+ENV REDIS_URL=redis://127.0.0.1:6379/0 STORAGE_ROOT=/tmp/photostore-check CACHE_ROOT=/tmp/photostore-check/cache PUBLIC_BASE_URL=http://testserver ADMIN_TOKEN=test-admin-token ADMIN_SESSION_SECRET=test-only EMAIL_ENABLED=false STRIPE_SECRET_KEY="" STRIPE_WEBHOOK_SECRET="" BREVO_API_KEY="" R2_ACCOUNT_ID="" R2_ACCESS_KEY_ID="" R2_SECRET_ACCESS_KEY="" TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
+CMD ["sh", "-c", "python -m pytest api/tests -q && python -m pytest worker/tests -q"]
