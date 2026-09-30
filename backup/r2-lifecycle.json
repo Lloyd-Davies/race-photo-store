@@ -1,0 +1,1 @@
+{"Rules":[{"ID":"database-backups-30-days","Status":"Enabled","Filter":{"Prefix":"database/"},"Expiration":{"Days":30},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}

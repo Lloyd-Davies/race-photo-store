@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_PASSWORD: local-backup-test
+      POSTGRES_DB: source
+    networks:
+      default:
+        aliases: [restore-postgres]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d source"]
+      interval: 2s
+      retries: 30
+  tests:
+    image: race-photo-backup-tests:worktree
+    build:
+      context: ..
+      dockerfile: backup/Dockerfile
+      target: tests
+    environment:
+      BACKUP_PGHOST: postgres
+      BACKUP_PGDATABASE: source
+      BACKUP_PGUSER: postgres
+      BACKUP_PGPASSWORD: local-backup-test
+      BACKUP_R2_ENDPOINT: http://127.0.0.1:5000
+      BACKUP_R2_BUCKET: backup-test
+      BACKUP_R2_ACCESS_KEY_ID: synthetic
+      BACKUP_R2_SECRET_ACCESS_KEY: synthetic
+      BACKUP_APPLICATION_IMAGES: '{"api":"local-test","worker":"local-test","nginx":"local-test"}'
+      BACKUP_LOCAL_TEST: '1'
+      REDIS_URL: redis://127.0.0.1:6379/0
+      ADMIN_TOKEN: local-backup-test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    tmpfs: ['/work:uid=999,gid=999,mode=0700']
+networks:
+  default:
+    internal: true

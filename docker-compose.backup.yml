@@ -1,0 +1,28 @@
+services:
+  backup:
+    image: ghcr.io/lloyd-davies/race-photo-store/backup:${BACKUP_IMAGE_TAG:?Choose a verified backup tag}
+    environment:
+      BACKUP_PGHOST: postgres
+      BACKUP_PGDATABASE: photostore
+      BACKUP_PGUSER: photostore
+      BACKUP_PGPASSWORD: ${POSTGRES_PASSWORD:?Required}
+      BACKUP_R2_ENDPOINT: ${BACKUP_R2_ENDPOINT:?Required}
+      BACKUP_R2_BUCKET: ${BACKUP_R2_BUCKET:?Separate private bucket required}
+      BACKUP_R2_ACCESS_KEY_ID: ${BACKUP_R2_ACCESS_KEY_ID:?Required}
+      BACKUP_R2_SECRET_ACCESS_KEY: ${BACKUP_R2_SECRET_ACCESS_KEY:?Required}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?Public encryption key required}
+      BACKUP_APPLICATION_IMAGES: ${BACKUP_APPLICATION_IMAGES:?Record observed app digests}
+      BACKUP_HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:?Required}
+    volumes: [backup-work:/work]
+    networks: [photostore, backup-egress]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 0.5
+    restart: unless-stopped
+networks:
+  backup-egress:
+volumes:
+  backup-work:

@@ -96,10 +96,23 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+  backup-tests:
+    name: Backup and restore tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse encrypted backup and restore
+        run: |
+          docker compose --env-file scripts/local.env -p race-photo-backup-test -f backup/compose.test.yml build tests
+          docker compose --env-file scripts/local.env -p race-photo-backup-test -f backup/compose.test.yml up --abort-on-container-exit --exit-code-from tests
+      - name: Stop disposable containers
+        if: always()
+        run: docker compose --env-file scripts/local.env -p race-photo-backup-test -f backup/compose.test.yml down
+
   build:
     name: Build & push ${{ matrix.service }}
     runs-on: ubuntu-latest
-    needs: [api-tests, worker-tests, frontend-checks]
+    needs: [api-tests, worker-tests, frontend-checks, backup-tests]
     permissions:
       contents: read
       packages: write
@@ -112,6 +125,8 @@ jobs:
             dockerfile: worker/Dockerfile
           - service: nginx
             dockerfile: nginx/Dockerfile
+          - service: backup
+            dockerfile: backup/Dockerfile
 
     steps:
       - name: Checkout
@@ -160,6 +175,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.service == 'backup' && 'runtime' || '' }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.image_tags.outputs.tags }}

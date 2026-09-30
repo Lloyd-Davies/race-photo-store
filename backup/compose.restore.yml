@@ -1,0 +1,45 @@
+services:
+  restore-postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_PASSWORD: local-restore-only
+      POSTGRES_DB: backup_drill_guard
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d backup_drill_guard"]
+      interval: 2s
+      retries: 30
+    volumes: [restored-database:/var/lib/postgresql/data]
+  restore:
+    image: race-photo-backup:worktree
+    build:
+      context: ..
+      dockerfile: backup/Dockerfile
+      target: runtime
+    command: [restore, --manifest, '${RESTORE_MANIFEST:?Select manifest}', --identity, /identity/key.txt]
+    environment:
+      BACKUP_PGUSER: postgres
+      BACKUP_PGPASSWORD: local-restore-only
+      BACKUP_PGDATABASE: postgres
+      BACKUP_PGHOST: restore-postgres
+      BACKUP_R2_ENDPOINT: ${BACKUP_R2_ENDPOINT:?Required}
+      BACKUP_R2_BUCKET: ${BACKUP_R2_BUCKET:?Required}
+      BACKUP_R2_ACCESS_KEY_ID: ${BACKUP_R2_ACCESS_KEY_ID:?Use read-only credentials}
+      BACKUP_R2_SECRET_ACCESS_KEY: ${BACKUP_R2_SECRET_ACCESS_KEY:?Required}
+    volumes:
+      - '${RESTORE_IDENTITY_FILE:?Select private key file}:/identity/key.txt:ro'
+      - restore-work:/work
+    networks: [database, egress]
+    depends_on:
+      restore-postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+networks:
+  database:
+    internal: true
+  egress:
+volumes:
+  restored-database:
+  restore-work:
