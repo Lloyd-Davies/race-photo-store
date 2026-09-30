@@ -26,7 +26,6 @@ services:
       BACKUP_R2_BUCKET: backup-test
       BACKUP_R2_ACCESS_KEY_ID: synthetic
       BACKUP_R2_SECRET_ACCESS_KEY: synthetic
-      BACKUP_APPLICATION_IMAGES: '{"api":"local-test","worker":"local-test","nginx":"local-test"}'
       BACKUP_LOCAL_TEST: '1'
       REDIS_URL: redis://127.0.0.1:6379/0
       ADMIN_TOKEN: local-backup-test

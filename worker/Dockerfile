@@ -19,4 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY shared/ ./shared/
 COPY worker/ ./
 
+ARG BUILD_REVISION=unknown
+RUN python -c 'import json, os, pathlib; pathlib.Path("/app/build-info.json").write_text(json.dumps({"component": "worker", "revision": os.environ["BUILD_REVISION"]}))'
+LABEL org.opencontainers.image.revision=$BUILD_REVISION
+
 CMD ["sh", "-c", "celery -A tasks worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}"]

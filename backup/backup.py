@@ -87,6 +87,49 @@ def ping(suffix=''):
             raise RuntimeError('Monitoring ping failed')
 
 
+def runtime_json(url):
+    # Fixed internal service addresses, no credentials or caller-supplied URLs.
+    with urllib.request.urlopen(url, timeout=5) as response:
+        body = response.read(16385)
+        if len(body) > 16384:
+            raise ValueError('Runtime metadata too large')
+        return json.loads(body)
+
+
+def build_identity(value, component):
+    if isinstance(value, dict) and value.get('component') == component:
+        revision = value.get('revision')
+        if isinstance(revision, str) and re.fullmatch(r'[0-9a-f]{40}', revision):
+            return {'component': component, 'revision': revision}
+    return {'component': component, 'revision': 'unknown'}
+
+
+def application_images():
+    observed = {'api': build_identity(None, 'api'), 'workers': [],
+                'nginx': build_identity(None, 'nginx')}
+    try:
+        api = runtime_json('http://api:8000/internal/build-info')
+        observed['api'] = build_identity(api.get('api'), 'api')
+        workers = api.get('workers', [])
+        if isinstance(workers, list):
+            observed['workers'] = [build_identity(worker, 'worker') for worker in workers[:32]]
+    except Exception:
+        pass
+    try:
+        observed['nginx'] = build_identity(runtime_json('http://nginx:8082/build-info'), 'nginx')
+    except Exception:
+        pass
+    incomplete = (observed['api']['revision'] == 'unknown'
+                  or observed['nginx']['revision'] == 'unknown'
+                  or not observed['workers']
+                  or any(worker['revision'] == 'unknown' for worker in observed['workers']))
+    if incomplete:
+        print(json.dumps({'warning': 'application_build_metadata_incomplete'}), flush=True)
+    return {'application_images_source': 'runtime_build_metadata',
+            'application_images_observed_at': datetime.now(timezone.utc).isoformat(),
+            'application_images_complete': not incomplete, 'application_images': observed}
+
+
 @contextmanager
 def workspace():
     root = Path(os.environ.get('BACKUP_WORK_DIR', '/work'))
@@ -162,9 +205,7 @@ def backup():
                 'snapshot_at': snapshot_at,
                 'sha256': digest(encrypted), 'size_bytes': encrypted.stat().st_size,
                 'postgres_version': version, 'schema_revisions': [r[0] for r in revision],
-                'application_images_source': 'operator_observed',
-                'application_images': json.loads(required('BACKUP_APPLICATION_IMAGES'))}
-            # Supplied operator observations; no socket access to inspect application containers.
+                **application_images()}
             transfer(lambda: client.put_object(Bucket=bucket, Key=key + '.json',
                 Body=json.dumps(manifest).encode(), ContentType='application/json'))
             stored = transfer(lambda: client.get_object(Bucket=bucket, Key=key + '.json'))

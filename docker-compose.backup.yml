@@ -11,7 +11,6 @@ services:
       BACKUP_R2_ACCESS_KEY_ID: ${BACKUP_R2_ACCESS_KEY_ID:?Required}
       BACKUP_R2_SECRET_ACCESS_KEY: ${BACKUP_R2_SECRET_ACCESS_KEY:?Required}
       BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?Public encryption key required}
-      BACKUP_APPLICATION_IMAGES: ${BACKUP_APPLICATION_IMAGES:?Record observed app digests}
       BACKUP_HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:?Required}
     volumes: [backup-work:/work]
     networks: [photostore, backup-egress]

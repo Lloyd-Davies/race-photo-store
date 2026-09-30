@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 import backup as b
+runtime_json = b.runtime_json
 from alembic import command
 from alembic.config import Config
 
@@ -48,6 +49,14 @@ def key(tmp_path, monkeypatch):
     return str(identity)
 
 
+@pytest.fixture(autouse=True)
+def synthetic_runtime_metadata(monkeypatch):
+    monkeypatch.setattr(b, 'runtime_json', lambda url: (
+        {'api': {'component': 'api', 'revision': 'a' * 40},
+         'workers': [{'component': 'worker', 'revision': 'b' * 40}]}
+        if 'api:8000' in url else {'component': 'nginx', 'revision': 'c' * 40}))
+
+
 def test_roundtrip_relationships_sequences_schema_and_cleanup(key):
     manifest = b.backup()
     name = b.restore(manifest['object_key'] + '.json', key)
@@ -60,7 +69,9 @@ def test_roundtrip_relationships_sequences_schema_and_cleanup(key):
             db.execute("INSERT INTO photos(id,event_id,proof_path,original_path) VALUES ('invalid',9999,'proof','original')")
     assert not list(Path('/work').glob('attempt-*'))
     assert manifest['size_bytes'] > 0
-    assert manifest['application_images']['api'] == 'local-test'
+    assert manifest['application_images']['api']['revision'] == 'a' * 40
+    assert manifest['application_images_complete'] is True
+    assert manifest['application_images_source'] == 'runtime_build_metadata'
 
 
 def test_wrong_key_refused_before_creating_database(key, tmp_path):
@@ -195,6 +206,7 @@ def test_deployment_and_restore_isolation():
     assert service['volumes'] == ['backup-work:/work']
     assert service['read_only'] is True
     assert 'BACKUP_IMAGE_TAG' in service['image']
+    assert 'BACKUP_APPLICATION_IMAGES' not in service['environment']
     assert not any('IDENTITY' in key for key in service['environment'])
     restore = yaml.safe_load(Path('/app/definitions/compose.restore.yml').read_text())
     assert set(restore['services']) == {'restore-postgres', 'restore'}
@@ -203,3 +215,40 @@ def test_deployment_and_restore_isolation():
     rules = json.loads(Path('/app/definitions/r2-lifecycle.json').read_text())['Rules'][0]
     assert rules['Filter']['Prefix'] == 'database/'
     assert rules['Expiration']['Days'] == 30
+
+
+def test_runtime_unavailable_does_not_prevent_verified_database_backup(key):
+    with patch.object(b, 'runtime_json', side_effect=TimeoutError), patch('builtins.print') as log:
+        manifest = b.backup()
+    assert manifest['application_images_complete'] is False
+    assert manifest['application_images']['api']['revision'] == 'unknown'
+    assert manifest['application_images']['nginx']['revision'] == 'unknown'
+    assert manifest['application_images']['workers'] == []
+    assert any('application_build_metadata_incomplete' in str(call) for call in log.call_args_list)
+    assert b.restore(manifest['object_key'] + '.json', key).startswith('drill_')
+
+
+def test_runtime_observations_preserve_mixed_workers_and_filter_extra_fields():
+    api = {'api': {'component': 'api', 'revision': 'a' * 40, 'secret': 'omit'},
+           'workers': [{'component': 'worker', 'revision': 'b' * 40},
+                       {'component': 'worker', 'revision': 'c' * 40}]}
+    with patch.object(b, 'runtime_json', side_effect=[api, {'component': 'nginx', 'revision': 'd' * 40}]):
+        result = b.application_images()
+    assert len(result['application_images']['workers']) == 2
+    assert 'secret' not in json.dumps(result)
+    assert result['application_images_complete'] is True
+
+
+@pytest.mark.parametrize('response', [[], {'api': {'revision': 'placeholder'}}, {'workers': 'invalid'}])
+def test_malformed_runtime_metadata_is_unknown(response):
+    with patch.object(b, 'runtime_json', return_value=response):
+        result = b.application_images()
+    assert result['application_images_complete'] is False
+
+
+def test_runtime_response_size_is_bounded():
+    with patch.object(b.urllib.request, 'urlopen') as request:
+        request.return_value.__enter__.return_value.read.return_value = b'x' * 16385
+        with pytest.raises(ValueError, match='too large'):
+            runtime_json('http://api:8000/internal/build-info')
+    assert request.call_args.kwargs['timeout'] == 5
