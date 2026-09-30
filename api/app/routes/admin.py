@@ -85,7 +85,9 @@ from photostore.pricing import effective_photo_price_pence, get_app_settings, no
 from photostore.storage import (
     R2StorageBackend,
     get_original_storage_backend,
+    get_original_storage_backend_name,
     get_proof_storage_backend,
+    get_proof_storage_backend_name,
     get_zip_storage_backend,
     get_zip_storage_backend_name,
 )
@@ -1693,13 +1695,23 @@ def delete_event(
     """Delete an event and all associated DB rows.
 
     Guards against events that have PAID orders unless force=True.
-    Set delete_files=True to also remove proofs/ and originals/ from disk.
+    Set delete_files=True to also remove local and migrated/remote photo assets.
     """
-    event = db.query(Event).filter(Event.id == event_id).first()
+    event = db.query(Event).filter(Event.id == event_id).with_for_update().first()
     if not event:
         raise HTTPException(404, "Event not found")
 
     slug = event.slug
+
+    migrations = {
+        row.asset_type: row
+        for row in db.query(EventAssetMigration).filter(
+            EventAssetMigration.event_id == event_id
+        ).all()
+    }
+    if any(row.status in {AssetMigrationStatus.QUEUED, AssetMigrationStatus.RUNNING}
+           for row in migrations.values()):
+        raise HTTPException(409, "Wait for active storage migrations before deleting this event")
 
     # Subquery for all photo IDs in this event — keeps filtering in the DB,
     # avoiding materialising a potentially huge list in Python memory.
@@ -1730,23 +1742,15 @@ def delete_event(
         )
 
     photos = db.query(Photo).filter(Photo.event_id == event_id).all()
-    migrations = {
-        row.asset_type: row
-        for row in db.query(EventAssetMigration).filter(
-            EventAssetMigration.event_id == event_id
-        ).all()
-    }
     if delete_files:
         r2_storage = None
-        for asset_type, path_attr in (
-            (AssetType.PROOFS, "proof_path"),
-            (AssetType.ORIGINALS, "original_path"),
+        for asset_type, path_attr, backend_name in (
+            (AssetType.PROOFS, "proof_path", get_proof_storage_backend_name()),
+            (AssetType.ORIGINALS, "original_path", get_original_storage_backend_name()),
         ):
             migration = migrations.get(asset_type)
-            if not migration or (
-                migration.migrated_count == 0
-                and migration.skipped_count == 0
-                and migration.status != AssetMigrationStatus.READY
+            if backend_name == "local" and (
+                migration is None or migration.status == AssetMigrationStatus.NOT_STARTED
             ):
                 continue
             try:
