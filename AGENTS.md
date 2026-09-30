@@ -13,6 +13,9 @@ server code, container images and production Compose definition. The sibling
   remember it does not contain the current uncommitted features.
 - Always follow the existing Conventional Commit style: `feat(scope): ...`,
   `fix(scope): ...`, `test(scope): ...` or `chore(scope): ...`. Commit focused changes.
+- This is a public repository. Keep deployment domains, personal branding and
+  production values in private environment settings/Notion, never committed defaults,
+  Compose fallbacks, frontend HTML or test fixtures. Use generic synthetic examples.
 - Use `scripts/setup.ps1`, `scripts/check.ps1` and `scripts/local.ps1`.
 - The local stack is standalone `compose.local.yml`, on port 18081. Do not start
   the production Compose stack or use production credentials for local tests.
