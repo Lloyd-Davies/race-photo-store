@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>{{ title }}</title>
+    <meta name="description" content="{{ description }}" />
+    <meta name="robots" content="{{ robots }}" />
+    <link rel="canonical" href="{{ canonical }}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="{{ site_name }}" />
+    <meta property="og:title" content="{{ title }}" />
+    <meta property="og:description" content="{{ description }}" />
+    <meta property="og:url" content="{{ canonical }}" />
+    {% if social_image %}<meta property="og:image" content="{{ social_image }}" />
+    <meta property="og:image:alt" content="Photograph from {{ event.name if event else site_name }}" />{% endif %}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{{ title }}" />
+    <meta name="twitter:description" content="{{ description }}" />
+    {% if social_image %}<meta name="twitter:image" content="{{ social_image }}" />{% endif %}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="stylesheet" href="/assets/app.css" />
+    {% if structured_data %}<script id="seo-structured-data" type="application/ld+json">{{ structured_data | tojson }}</script>{% endif %}
+    <script>
+      (function () {
+        const stored = localStorage.getItem('theme')
+        const dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (dark) document.documentElement.classList.add('dark')
+      })()
+    </script>
+  </head>
+  <body class="bg-surface-950 text-content antialiased">
+    <div id="root">
+      <main class="mx-auto max-w-5xl px-4 py-12">
+        {% if page_kind == "home" %}
+          <h1>{{ site_name }}</h1>
+          <p>{{ description }}</p>
+          {% if public_events %}
+            <h2>Event photo galleries</h2>
+            <ul>
+              {% for public_event in public_events %}
+                <li><a href="/events/{{ public_event.slug }}">{{ public_event.name }}</a></li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        {% elif page_kind in ("event", "private_event") and event %}
+          <nav aria-label="Breadcrumb"><a href="/">Events</a></nav>
+          <h1>{{ event.name }}</h1>
+          <p>{{ event_date }}{% if event.location %} · {{ event.location }}{% endif %}</p>
+          {% if page_kind == "event" %}<p>{{ event_description }}</p>{% else %}<p>This gallery is password protected.</p>{% endif %}
+        {% elif page_kind == "not_found" %}
+          <h1>Gallery not found</h1><p>The requested gallery could not be found.</p><a href="/">Back to events</a>
+        {% elif page_kind == "unavailable" %}
+          <h1>Gallery unavailable</h1><p>Please try again shortly.</p>
+        {% else %}
+          <h1>{{ title }}</h1>
+        {% endif %}
+      </main>
+    </div>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

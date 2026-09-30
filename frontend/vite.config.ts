@@ -17,6 +17,12 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
+        entryFileNames: 'assets/app.js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: (assetInfo) =>
+          assetInfo.name?.endsWith('.css')
+            ? 'assets/app.css'
+            : 'assets/[name]-[hash][extname]',
         // Split vendor and app chunks for better Cloudflare edge-caching
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],

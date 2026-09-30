@@ -20,4 +20,9 @@ def get_site_config(db: Session = Depends(get_db)) -> dict:
         "site_name": settings.SITE_NAME,
         "site_tagline": settings.SITE_TAGLINE,
         "allow_stripe_promotion_codes": app_settings.allow_stripe_promotion_codes,
+        "seo_site_url": settings.SEO_SITE_URL,
+        "seo_default_title": settings.SEO_DEFAULT_TITLE,
+        "seo_title_template": settings.SEO_TITLE_TEMPLATE,
+        "seo_default_description": settings.SEO_DEFAULT_DESCRIPTION,
+        "seo_logo_url": settings.SEO_LOGO_URL,
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArrowLeft,
@@ -26,6 +26,8 @@ import PublicPageShell from '../components/PublicPageShell'
 import { PhotoSkeleton } from '../components/Skeleton'
 import { useCartStore } from '../store/cart'
 import { formatMoney } from '../utils/money'
+import SeoHead, { absoluteSeoUrl, robotsForQuery, titleFromTemplate } from '../components/SeoHead'
+import { useSiteConfig } from '../context/SiteConfig'
 
 function formatEventDate(date?: string) {
   if (!date) return 'Date to be confirmed'
@@ -111,6 +113,8 @@ function mergeViewerItems(currentItems: FocusViewerItem[], nextItems: FocusViewe
 export default function EventGallery() {
   const { eventRef } = useParams<{ eventRef: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const siteConfig = useSiteConfig()
   const [page, setPage] = useState(1)
   const [bibInput, setBibInput] = useState('')
   const [startTimeInput, setStartTimeInput] = useState('')
@@ -242,6 +246,43 @@ export default function EventGallery() {
   const hasPreviousViewer = activeViewerIndex > 0 || minViewerPage > 1
   const hasNextViewer = activeViewerIndex >= 0 && (activeViewerIndex < viewerItems.length - 1 || maxViewerPage < totalViewerPages)
 
+  const canonicalUrl = absoluteSeoUrl(`/events/${event?.slug ?? eventRef ?? ''}`, siteConfig)
+  const eventDescription = event
+    ? `Browse and purchase photographs from ${event.name}, photographed on ${formatEventDate(event.date)}${event.location ? ` at ${event.location}` : ''} by ${siteConfig.site_name}.`
+    : 'The requested event photo gallery could not be found.'
+  const eventTitle = event
+    ? titleFromTemplate(`${event.name} – ${formatEventDate(event.date)} Photos`, siteConfig)
+    : titleFromTemplate(eventError ? 'Gallery not found' : 'Gallery', siteConfig)
+  const socialImage = event?.cover_url && !event.is_password_protected
+    ? absoluteSeoUrl(event.cover_url, siteConfig)
+    : undefined
+  const eventStructuredData = event && !event.is_password_protected
+    ? [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          name: event.name,
+          description: eventDescription,
+          url: canonicalUrl,
+          mainEntity: {
+            '@type': 'ImageGallery',
+            name: `${event.name} photo gallery`,
+            description: eventDescription,
+            url: canonicalUrl,
+            image: socialImage,
+          },
+        },
+        {
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Events', item: `${siteConfig.seo_site_url}/` },
+            { '@type': 'ListItem', position: 2, name: event.name, item: canonicalUrl },
+          ],
+        },
+      ]
+    : null
+
   const loadViewerPage = useCallback(
     async (targetPage: number, direction: FocusViewerDirection) => {
       if (!event?.slug || !data || targetPage < 1 || targetPage > data.pages) return []
@@ -326,7 +367,17 @@ export default function EventGallery() {
   }
 
   return (
-    <PublicPageShell className="space-y-5 sm:space-y-8">
+    <>
+      <SeoHead
+        title={eventTitle}
+        description={eventDescription}
+        canonicalUrl={canonicalUrl}
+        robots={eventError || event?.is_password_protected ? 'noindex, nofollow, noarchive' : robotsForQuery(location.search, !!event)}
+        siteName={siteConfig.site_name}
+        socialImage={socialImage}
+        structuredData={eventStructuredData}
+      />
+      <PublicPageShell className="space-y-5 sm:space-y-8">
       <nav className="flex min-w-0 items-center gap-3 text-sm" aria-label="Breadcrumb">
         <Link
           to="/"
@@ -378,6 +429,11 @@ export default function EventGallery() {
                   label={event?.is_password_protected ? 'Protected event' : 'Open gallery'}
                 />
               </div>
+              {event && (
+                <p className="mt-4 max-w-3xl text-sm leading-6 text-content-muted sm:text-base">
+                  {eventDescription}
+                </p>
+              )}
             </div>
 
             <div className="grid min-w-0 grid-cols-3 gap-2 lg:w-full lg:max-w-sm lg:gap-3">
@@ -612,6 +668,7 @@ export default function EventGallery() {
                     photo={photo}
                     eventId={event.id}
                     eventSlug={event.slug}
+                    eventName={event.name}
                     onFullscreen={handleOpenViewer}
                   />
                 ))}
@@ -658,6 +715,7 @@ export default function EventGallery() {
           total={data.total}
           eventId={event.id}
           eventSlug={event.slug}
+          eventName={event.name}
           photoPricePence={event.effective_photo_price_pence}
           currency={event.currency}
           hasPrevious={hasPreviousViewer}
@@ -670,6 +728,7 @@ export default function EventGallery() {
           onClose={handleCloseViewer}
         />
       )}
-    </PublicPageShell>
+      </PublicPageShell>
+    </>
   )
 }

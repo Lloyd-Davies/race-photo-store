@@ -1,4 +1,4 @@
-import { Outlet, Link } from 'react-router-dom'
+import { Outlet, Link, useLocation } from 'react-router-dom'
 import { Camera, ShoppingBag } from 'lucide-react'
 import { useCartStore } from '../store/cart'
 import CartDrawer from './CartDrawer'
@@ -7,14 +7,33 @@ import ThemeToggle from './ThemeToggle'
 import { useState } from 'react'
 import { useSiteConfig } from '../context/SiteConfig'
 import { clsx } from '../utils/clsx'
+import SeoHead, { absoluteSeoUrl, titleFromTemplate } from './SeoHead'
 
 export default function Layout() {
   const items = useCartStore((s) => s.items)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const { site_name } = useSiteConfig()
+  const siteConfig = useSiteConfig()
+  const { site_name } = siteConfig
+  const location = useLocation()
+  const noindexPage = location.pathname === '/cart'
+    ? 'Cart'
+    : location.pathname.startsWith('/orders/')
+      ? 'Order'
+      : location.pathname.startsWith('/admin')
+        ? 'Admin'
+        : null
 
   return (
     <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-surface-950">
+      {noindexPage && (
+        <SeoHead
+          title={titleFromTemplate(noindexPage, siteConfig)}
+          description={siteConfig.seo_default_description}
+          canonicalUrl={absoluteSeoUrl(location.pathname.replace(/\/$/, ''), siteConfig)}
+          robots="noindex, nofollow, noarchive"
+          siteName={site_name}
+        />
+      )}
       {/* Top nav */}
       <header className="sticky top-0 z-40 bg-surface-950/90 backdrop-blur border-b border-surface-700">
         <div className="mx-auto flex h-14 w-full max-w-7xl min-w-0 items-center justify-between px-4 sm:px-6">

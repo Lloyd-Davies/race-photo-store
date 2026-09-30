@@ -23,6 +23,7 @@ interface FocusViewerProps {
   total: number
   eventId: number
   eventSlug: string
+  eventName: string
   photoPricePence: number
   currency: string
   hasPrevious: boolean
@@ -41,6 +42,7 @@ export default function FocusViewer({
   total,
   eventId,
   eventSlug,
+  eventName,
   photoPricePence,
   currency,
   hasPrevious,
@@ -255,7 +257,9 @@ export default function FocusViewer({
         >
           <img
             src={activeItem.photo.proof_url}
-            alt={`Photo ${activeItem.photo.photo_id}`}
+            alt={`Photograph from ${eventName}`}
+            width={activeItem.photo.preview_width ?? undefined}
+            height={activeItem.photo.preview_height ?? undefined}
             className="max-h-full max-w-full select-none object-contain"
             draggable={false}
           />
@@ -386,7 +390,9 @@ export default function FocusViewer({
                 >
                   <img
                     src={item.photo.proof_url}
-                    alt=""
+                    alt={`Photograph from ${eventName}`}
+                    width={item.photo.preview_width ?? undefined}
+                    height={item.photo.preview_height ?? undefined}
                     className="h-full w-full object-cover"
                     loading="lazy"
                     decoding="async"

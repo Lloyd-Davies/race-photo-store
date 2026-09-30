@@ -8,10 +8,11 @@ interface PhotoCardProps {
   photo: Photo
   eventId: number
   eventSlug: string
+  eventName: string
   onFullscreen?: (photo: Photo) => void
 }
 
-export default function PhotoCard({ photo, eventId, eventSlug, onFullscreen }: PhotoCardProps) {
+export default function PhotoCard({ photo, eventId, eventSlug, eventName, onFullscreen }: PhotoCardProps) {
   const [ref, isVisible] = useIntersection({ rootMargin: '200px' })
   const [loaded, setLoaded] = useState(false)
   const inCart = useCartStore((s) => s.has(photo.photo_id))
@@ -49,13 +50,22 @@ export default function PhotoCard({ photo, eventId, eventSlug, onFullscreen }: P
       }}
     >
       {!loaded && (
-        <div className="w-full animate-pulse bg-surface-800" style={{ paddingBottom: '66.67%' }} />
+        <div
+          className="w-full animate-pulse bg-surface-800"
+          style={{
+            aspectRatio: photo.preview_width && photo.preview_height
+              ? `${photo.preview_width} / ${photo.preview_height}`
+              : '3 / 2',
+          }}
+        />
       )}
 
       {isVisible && (
         <img
           src={photo.proof_url}
-          alt={`Photo ${photo.photo_id}`}
+          alt={`Photograph from ${eventName}`}
+          width={photo.preview_width ?? undefined}
+          height={photo.preview_height ?? undefined}
           loading="lazy"
           decoding="async"
           className={`block h-auto w-full transition-opacity duration-300 ${

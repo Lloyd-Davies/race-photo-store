@@ -3,8 +3,13 @@ import { fetchSiteConfig, type SiteConfig } from '../api/siteConfig'
 
 const DEFAULT: SiteConfig = {
   site_name: 'Race Photos',
-  site_tagline: 'Your race, your photos.',
+  site_tagline: '',
   allow_stripe_promotion_codes: false,
+  seo_site_url: 'https://photos.example.com',
+  seo_default_title: 'Race Photos | Race and Event Photos',
+  seo_title_template: '{page} | {site_name}',
+  seo_default_description: 'Browse and purchase professional photographs from running, athletics and sporting events photographed by Race Photos.',
+  seo_logo_url: 'https://photos.example.com/favicon.svg',
 }
 
 const SiteConfigContext = createContext<SiteConfig>(DEFAULT)
@@ -17,11 +22,6 @@ export function SiteConfigProvider({ children }: { children: ReactNode }) {
       .then(setConfig)
       .catch(() => { /* keep defaults if API unreachable */ })
   }, [])
-
-  // Update document title whenever site name changes
-  useEffect(() => {
-    document.title = config.site_name
-  }, [config.site_name])
 
   return (
     <SiteConfigContext.Provider value={config}>

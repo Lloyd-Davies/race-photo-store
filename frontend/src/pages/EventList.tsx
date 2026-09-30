@@ -1,14 +1,18 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ImageOff, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { fetchEvents } from '../api/events'
 import EventTile from '../components/EventTile'
 import PublicPageShell from '../components/PublicPageShell'
 import { Skeleton } from '../components/Skeleton'
 import { useSiteConfig } from '../context/SiteConfig'
+import SeoHead, { robotsForQuery } from '../components/SeoHead'
 
 export default function EventList() {
-  const { site_name } = useSiteConfig()
+  const siteConfig = useSiteConfig()
+  const { site_name } = siteConfig
+  const location = useLocation()
   const { data: events, isLoading, error } = useQuery({
     queryKey: ['events'],
     queryFn: fetchEvents,
@@ -17,7 +21,23 @@ export default function EventList() {
   const eventCount = events?.length ?? 0
 
   return (
-    <PublicPageShell className="space-y-10">
+    <>
+      <SeoHead
+        title={siteConfig.seo_default_title}
+        description={siteConfig.seo_default_description}
+        canonicalUrl={`${siteConfig.seo_site_url}/`}
+        robots={robotsForQuery(location.search)}
+        siteName={site_name}
+        structuredData={{
+          '@context': 'https://schema.org',
+          '@type': 'Organization',
+          name: site_name,
+          url: siteConfig.seo_site_url,
+          logo: siteConfig.seo_logo_url,
+          description: siteConfig.seo_default_description,
+        }}
+      />
+      <PublicPageShell className="space-y-10">
       <section className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] lg:items-end">
         <div className="min-w-0 max-w-3xl">
           <p className="text-sm font-medium uppercase tracking-[0.18em] text-content-muted">
@@ -95,6 +115,7 @@ export default function EventList() {
           </div>
         )}
       </section>
-    </PublicPageShell>
+      </PublicPageShell>
+    </>
   )
 }

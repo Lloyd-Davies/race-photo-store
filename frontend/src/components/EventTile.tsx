@@ -25,7 +25,9 @@ export default function EventTile({ event }: EventTileProps) {
         {event.cover_url ? (
           <img
             src={event.cover_url}
-            alt=""
+            alt={`Photograph from ${event.name}`}
+            width={720}
+            height={480}
             className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
             loading="lazy"
             decoding="async"
