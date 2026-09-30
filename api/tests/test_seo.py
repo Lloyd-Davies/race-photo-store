@@ -10,9 +10,18 @@ from photostore.models import Event, EventStatus
 PRODUCTION_URL = "https://photos.example.com"
 
 
+@pytest.fixture(autouse=True)
+def synthetic_site_settings(db_engine, monkeypatch):
+    from photostore.config import settings
+    monkeypatch.setattr(settings, "SEO_SITE_URL", PRODUCTION_URL)
+    monkeypatch.setattr(settings, "SEO_LOGO_URL", f"{PRODUCTION_URL}/favicon.svg")
+
+
 @pytest.mark.parametrize(
     "invalid_url",
-    ["http://localhost:8080", "https://api.internal", "https://127.0.0.1"],
+    ["http://localhost:8080", "https://api.internal", "https://127.0.0.1",
+     "https://photos.example.com/subpath", "https://photos.example.com?query=1",
+     "https://photos.example.com#fragment", "https://user:password@photos.example.com"],
 )
 def test_seo_site_url_rejects_local_and_internal_hosts(invalid_url, db_engine):
     from pydantic import ValidationError
@@ -24,6 +33,63 @@ def test_seo_site_url_rejects_local_and_internal_hosts(invalid_url, db_engine):
             REDIS_URL="redis://example.invalid/0",
             SEO_SITE_URL=invalid_url,
         )
+
+
+def test_branding_and_origin_are_runtime_configuration():
+    from photostore.config import Settings
+    configured = Settings(_env_file=None,
+        DATABASE_URL="postgresql+psycopg://example.invalid/test", REDIS_URL="redis://example.invalid/0",
+        SITE_NAME="Synthetic Event Store", SEO_SITE_URL="https://events.example.org/",
+        SEO_LOGO_URL="")
+    assert configured.SITE_NAME == "Synthetic Event Store"
+    assert configured.SEO_SITE_URL == "https://events.example.org"
+    assert configured.SEO_LOGO_URL == "https://events.example.org/favicon.svg"
+    assert configured.SEO_DEFAULT_TITLE == "Synthetic Event Store | Race and Event Photos"
+
+
+def test_explicit_public_logo_can_use_another_origin():
+    from photostore.config import Settings
+    configured = Settings(_env_file=None,
+        DATABASE_URL="postgresql+psycopg://example.invalid/test", REDIS_URL="redis://example.invalid/0",
+        SEO_SITE_URL="https://events.example.org", SEO_LOGO_URL="https://cdn.example.org/logo.svg")
+    assert configured.SEO_LOGO_URL == "https://cdn.example.org/logo.svg"
+
+
+@pytest.mark.parametrize("public_url,expected", [
+    ("https://events.example.org/", "https://events.example.org"),
+    ("http://127.0.0.1:18081", "https://photos.example.com"),
+])
+def test_minimal_configuration_derives_metadata_and_sender(public_url, expected):
+    from photostore.config import Settings
+    configured = Settings(_env_file=None,
+        DATABASE_URL="postgresql+psycopg://example.invalid/test", REDIS_URL="redis://example.invalid/0",
+        PUBLIC_BASE_URL=public_url, SITE_NAME="Synthetic Store", SEO_SITE_URL="",
+        SEO_LOGO_URL="", SEO_DEFAULT_TITLE="", EMAIL_FROM_NAME="")
+    assert configured.SEO_SITE_URL == expected
+    assert configured.SEO_LOGO_URL == f"{expected}/favicon.svg"
+    assert configured.SEO_DEFAULT_TITLE == "Synthetic Store | Race and Event Photos"
+    assert configured.EMAIL_FROM_NAME == "Synthetic Store"
+
+
+def test_explicit_metadata_and_sender_override_derived_defaults():
+    from photostore.config import Settings
+    configured = Settings(_env_file=None,
+        DATABASE_URL="postgresql+psycopg://example.invalid/test", REDIS_URL="redis://example.invalid/0",
+        PUBLIC_BASE_URL="https://events.example.org", SEO_SITE_URL="https://search.example.org",
+        SEO_LOGO_URL="https://cdn.example.org/logo.svg", SEO_DEFAULT_TITLE="Custom title",
+        EMAIL_FROM_NAME="Custom sender")
+    assert configured.SEO_SITE_URL == "https://search.example.org"
+    assert configured.SEO_DEFAULT_TITLE == "Custom title"
+    assert configured.EMAIL_FROM_NAME == "Custom sender"
+
+
+@pytest.mark.parametrize("template", ["{unknown}", "{page", "{page.__class__}"])
+def test_invalid_title_templates_fail_at_setup(template):
+    from pydantic import ValidationError
+    from photostore.config import Settings
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, DATABASE_URL="postgresql+psycopg://example.invalid/test",
+                 REDIS_URL="redis://example.invalid/0", SEO_TITLE_TEMPLATE=template)
 
 
 def _structured_data(html: str):

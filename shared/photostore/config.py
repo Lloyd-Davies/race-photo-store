@@ -1,7 +1,8 @@
 import ipaddress
+from string import Formatter
 from urllib.parse import urlparse
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,31 +42,39 @@ class Settings(BaseSettings):
 
     # ── Branding ──────────────────────────────────────────────────────────────
     SITE_NAME: str = "Race Photos"
-    SITE_TAGLINE: str = ""
+    SITE_TAGLINE: str = "Your race, your photos."
 
     # Public search/social metadata. This is deliberately separate from
     # PUBLIC_BASE_URL, which may point at localhost for transactional links in
     # development. SEO URLs must always remain public, absolute HTTPS URLs.
-    SEO_SITE_URL: str = "https://photos.example.com"
-    SEO_DEFAULT_TITLE: str = "Race Photos | Race and Event Photos"
+    SEO_SITE_URL: str = ""
+    SEO_DEFAULT_TITLE: str = ""
     SEO_TITLE_TEMPLATE: str = "{page} | {site_name}"
     SEO_DEFAULT_DESCRIPTION: str = (
-        "Browse and purchase professional photographs from running, athletics "
-        "and sporting events photographed by Race Photos."
+        "Browse and purchase photographs from running, athletics and sporting events."
     )
-    SEO_LOGO_URL: str = "https://photos.example.com/favicon.svg"
+    SEO_LOGO_URL: str = ""
 
-    @field_validator(
-        "SEO_SITE_URL",
-        "SEO_LOGO_URL",
-    )
+    @field_validator("SEO_SITE_URL")
     @classmethod
-    def validate_public_seo_url(cls, value: str) -> str:
+    def validate_site_origin(cls, value: str) -> str:
+        if not value.strip():
+            return ""
+        cleaned = cls.validate_public_seo_url(value)
+        parsed = urlparse(cleaned)
+        if parsed.path or parsed.query or parsed.fragment:
+            raise ValueError("SEO_SITE_URL must be an HTTPS origin without a path, query or fragment")
+        return cleaned
+
+    @staticmethod
+    def validate_public_seo_url(value: str) -> str:
         cleaned = value.strip().rstrip("/")
         parsed = urlparse(cleaned)
         hostname = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or not hostname:
             raise ValueError("SEO URLs must be absolute HTTPS URLs")
+        if parsed.username or parsed.password:
+            raise ValueError("SEO URLs must not contain credentials")
         if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
             raise ValueError("SEO URLs must not use local or internal hostnames")
         try:
@@ -75,6 +84,40 @@ class Settings(BaseSettings):
         if address and not address.is_global:
             raise ValueError("SEO URLs must not use private or non-global IP addresses")
         return cleaned
+
+    @field_validator("SEO_LOGO_URL")
+    @classmethod
+    def validate_optional_logo_url(cls, value: str) -> str:
+        return cls.validate_public_seo_url(value) if value.strip() else ""
+
+    @field_validator("SEO_TITLE_TEMPLATE")
+    @classmethod
+    def validate_title_template(cls, value: str) -> str:
+        try:
+            fields = list(Formatter().parse(value))
+        except ValueError:
+            raise ValueError("SEO_TITLE_TEMPLATE must have balanced braces") from None
+        for _, field, spec, conversion in fields:
+            if field is not None and (field not in {"page", "site_name"} or spec or conversion):
+                raise ValueError("SEO_TITLE_TEMPLATE supports only {page} and {site_name}")
+        return value
+
+    @model_validator(mode="after")
+    def derive_logo_url(self):
+        if not self.SEO_SITE_URL:
+            # Local transactional URLs must never become public search metadata.
+            public_url = self.PUBLIC_BASE_URL.strip().rstrip("/")
+            self.SEO_SITE_URL = (
+                self.validate_site_origin(public_url)
+                if public_url.startswith("https://") else "https://photos.example.com"
+            )
+        if not self.EMAIL_FROM_NAME.strip():
+            self.EMAIL_FROM_NAME = self.SITE_NAME
+        if not self.SEO_DEFAULT_TITLE.strip():
+            self.SEO_DEFAULT_TITLE = f"{self.SITE_NAME} | Race and Event Photos"
+        if not self.SEO_LOGO_URL:
+            self.SEO_LOGO_URL = f"{self.SEO_SITE_URL}/favicon.svg"
+        return self
 
     # ── Email ─────────────────────────────────────────────────────────────────
     EMAIL_ENABLED: bool = False
