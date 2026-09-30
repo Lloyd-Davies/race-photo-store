@@ -248,7 +248,7 @@ def main():
                 print(json.dumps({'result': 'failed', 'error_type': type(exc).__name__}), flush=True)
             target = next_run(datetime.now(timezone.utc))
             while datetime.now(timezone.utc) < target:
-                time.sleep(min(30, (target - datetime.now(timezone.utc)).total_seconds()))
+                time.sleep(max(0, min(30, (target - datetime.now(timezone.utc)).total_seconds())))
 
 
 if __name__ == '__main__':
