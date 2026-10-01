@@ -212,6 +212,10 @@ def test_deployment_and_restore_isolation():
     assert set(restore['services']) == {'restore-postgres', 'restore'}
     assert 'ports' not in restore['services']['restore-postgres']
     assert restore['networks']['database']['internal'] is True
+    assert restore['services']['restore']['user'] == '0'
+    assert restore['services']['restore']['cap_drop'] == ['ALL']
+    assert restore['services']['restore']['read_only'] is True
+    assert restore['services']['restore']['tmpfs'] == ['/work:uid=0,gid=0,mode=0700']
     rules = json.loads(Path('/app/definitions/r2-lifecycle.json').read_text())['Rules'][0]
     assert rules['Filter']['Prefix'] == 'database/'
     assert rules['Expiration']['Days'] == 30

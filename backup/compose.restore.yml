@@ -17,6 +17,9 @@ services:
       dockerfile: backup/Dockerfile
       target: runtime
     command: [restore, --manifest, '${RESTORE_MANIFEST:?Select manifest}', --identity, /identity/key.txt]
+    # Locally generated age keys are mode 0600 owned by container root.
+    # Match that owner without granting capabilities or relaxing key permissions.
+    user: '0'
     environment:
       BACKUP_PGUSER: postgres
       BACKUP_PGPASSWORD: local-restore-only
@@ -28,7 +31,7 @@ services:
       BACKUP_R2_SECRET_ACCESS_KEY: ${BACKUP_R2_SECRET_ACCESS_KEY:?Required}
     volumes:
       - '${RESTORE_IDENTITY_FILE:?Select private key file}:/identity/key.txt:ro'
-      - restore-work:/work
+    tmpfs: ['/work:uid=0,gid=0,mode=0700']
     networks: [database, egress]
     depends_on:
       restore-postgres:
@@ -42,4 +45,3 @@ networks:
   egress:
 volumes:
   restored-database:
-  restore-work:
