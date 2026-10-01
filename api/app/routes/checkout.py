@@ -12,6 +12,7 @@ from app.order_activity import record_order_activity
 from app.order_access import create_order_access_token
 from app.schemas import CheckoutOut, CheckoutRequest
 from photostore.config import settings
+from photostore.recovery import ensure_job
 from photostore.models import Cart, Event, Order, OrderItem, OrderStatus
 from photostore.pricing import effective_photo_price_pence, get_app_settings
 
@@ -140,6 +141,7 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db)) -> Chec
     )
 
     order.stripe_session_id = session.id
+    ensure_job(db, order.id, "payment", order.id, delay=900)
     record_order_activity(
         db,
         order_id=order.id,

@@ -18,10 +18,15 @@ celery_app.conf.update(
     task_acks_late=True,            # ack only after the task completes
 )
 
+celery_app.conf.beat_schedule = {
+    "recover-orders-five-minutely": {
+        "task": "tasks.recover_orders.recover_orders", "schedule": 300.0,
+    },
+}
 if settings.ZIP_CLEANUP_ENABLED:
-    celery_app.conf.beat_schedule = {
+    celery_app.conf.beat_schedule.update({
         "cleanup-expired-zips-hourly": {
             "task": "tasks.cleanup_expired_zips.cleanup_expired_zips",
             "schedule": 3600.0,
         },
-    }
+    })

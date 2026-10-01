@@ -1,3 +1,4 @@
+from photostore.recovery import task_lock, exclusion, retry_allowed
 import shutil
 import zipfile
 import logging
@@ -23,13 +24,13 @@ def _record_zip_failure(db, order_id: int, exc: Exception) -> None:
     if not delivery:
         return
     delivery.zip_status = DeliveryZipStatus.FAILED
-    delivery.zip_error = str(exc)[:ZIP_ERROR_MAX_LENGTH]
+    delivery.zip_error = "Original unavailable; check storage or restore the archived event." if isinstance(exc, FileNotFoundError) else type(exc).__name__
     db.add(OrderActivity(
         order_id=order_id,
         actor="worker",
         action="ZIP_BUILD_FAILED",
         message="ZIP build failed",
-        metadata_json={"error": str(exc)[:ZIP_ERROR_MAX_LENGTH]},
+        metadata_json={"error": "Original unavailable; check storage or restore the archived event." if isinstance(exc, FileNotFoundError) else type(exc).__name__},
     ))
     db.commit()
 
@@ -37,7 +38,13 @@ def _record_zip_failure(db, order_id: int, exc: Exception) -> None:
 @celery_app.task(name="tasks.build_zip.build_zip", bind=True, max_retries=3)
 def build_zip(self, order_id: int) -> None:  # type: ignore[override]
     db = SessionLocal()
+    lock = task_lock(db, 7212, order_id)
+    acquired = lock.__enter__()
     try:
+        if not acquired:
+            return
+        if not retry_allowed(db, "zip", order_id):
+            return
         order: Order | None = db.query(Order).filter(Order.id == order_id).first()
         if not order:
             raise ValueError(f"Order {order_id} not found")
@@ -45,6 +52,11 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         delivery = db.query(Delivery).filter(Delivery.order_id == order_id).first()
         if not delivery:
             raise ValueError(f"Delivery for order {order_id} not found")
+
+        if exclusion(order, db):
+            return
+        if delivery.zip_status == DeliveryZipStatus.READY and delivery.zip_expires_at and delivery.zip_expires_at > datetime.now(timezone.utc) and delivery.zip_path and get_zip_storage_backend().exists(delivery.zip_path):
+            return
 
         delivery.zip_status = DeliveryZipStatus.BUILDING
         delivery.zip_error = None
@@ -101,18 +113,16 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
                                     remote_original,
                                 )
                                 original = remote_original
-                        except Exception:
+                        except Exception as exc:
                             logger.warning(
-                                "Original R2 read failed for %s; using local fallback",
-                                photo.original_path,
-                                exc_info=True,
+                                "original_read_failed order_id=%s error_type=%s; using local fallback",
+                                order_id, type(exc).__name__,
                             )
                             remote_original.unlink(missing_ok=True)
                             original = local_original
                     if not original.exists():
                         raise FileNotFoundError(
-                            f"Original not found: {original}. "
-                            "If this event is archived, run restore_event first."
+                            "Original unavailable; check storage or restore the archived event."
                         )
 
                     zf.write(original, arcname=f"{photo_id}.jpg")
@@ -151,4 +161,5 @@ def build_zip(self, order_id: int) -> None:  # type: ignore[override]
         raise self.retry(exc=exc, countdown=60)
 
     finally:
+        lock.__exit__(None, None, None)
         db.close()

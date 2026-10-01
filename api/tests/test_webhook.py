@@ -215,7 +215,7 @@ def test_webhook_email_enqueue_failure_keeps_order_fulfilled(
         Communication.order_id == order.id
     ).one()
     assert communication.status == CommunicationStatus.FAILED
-    assert communication.error_message == "Email task could not be queued; retry from admin."
+    assert communication.error_message == "Email dispatch deferred; automatic recovery will retry eligible orders."
     assert "private details" not in communication.error_message
     activity = db_session.query(OrderActivity).filter(
         OrderActivity.order_id == order.id,
@@ -323,6 +323,7 @@ def test_webhook_fulfills_order(client, db_session, test_photos, mock_celery_sen
         "data": {"object": {
             "id": order.stripe_session_id,
             "payment_intent": "pi_testfake",
+            "payment_status": "paid",
             "customer_email": "runner@example.com",
         }},
     }
@@ -390,6 +391,7 @@ def test_webhook_idempotent(client, db_session, test_photos, mock_celery_send_ta
         "data": {"object": {
             "id": order.stripe_session_id,
             "payment_intent": "pi_testfake",
+            "payment_status": "paid",
             "customer_email": "runner@example.com",
         }},
     }
@@ -446,6 +448,7 @@ def test_webhook_queues_download_ready_email(client, db_session, test_photos, mo
         "data": {"object": {
             "id": order.stripe_session_id,
             "payment_intent": "pi_email_test",
+            "payment_status": "paid",
             "customer_email": "runner@example.com",
         }},
     }
@@ -492,6 +495,7 @@ def test_webhook_duplicate_does_not_queue_second_email(client, db_session, test_
         "data": {"object": {
             "id": order.stripe_session_id,
             "payment_intent": "pi_dup_test",
+            "payment_status": "paid",
             "customer_email": "runner@example.com",
         }},
     }

@@ -131,6 +131,8 @@ class OrderZipOut(BaseModel):
 class OrderOut(BaseModel):
     id: int
     status: OrderStatus
+    recovery_pending: bool = False
+    recovery_needs_review: bool = False
     download_url: Optional[str] = None
     zip: OrderZipOut = Field(default_factory=OrderZipOut)
     items: list[OrderDownloadItemOut] = Field(default_factory=list)

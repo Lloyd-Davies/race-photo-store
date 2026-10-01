@@ -22,6 +22,7 @@ class EmailMessage:
     text_body: str
     from_email: str
     from_name: str
+    idempotency_key: str | None = None
 
 
 class BrevoProvider:
@@ -48,12 +49,24 @@ class BrevoProvider:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if msg.idempotency_key:
+            payload["headers"] = {"idempotencyKey": msg.idempotency_key}
 
         resp = httpx.post(self._API_URL, json=payload, headers=headers, timeout=10.0)
 
         if resp.status_code not in (200, 201):
+            # Brevo's documented duplicate response confirms the original request
+            # was accepted within its bounded deduplication window.
+            try:
+                error = resp.json()
+            except ValueError:
+                error = {}
+            if (resp.status_code == 400 and msg.idempotency_key
+                    and error.get("code") == "duplicate_parameter"
+                    and "idempotency" in str(error.get("message", "")).lower()):
+                return "deduplicated"
             raise ProviderError(
-                f"Brevo returned {resp.status_code}: {resp.text[:200]}"
+                f"Brevo returned HTTP {resp.status_code}"
             )
 
         data = resp.json()

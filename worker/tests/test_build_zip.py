@@ -346,7 +346,7 @@ def test_build_zip_marks_delivery_failed_without_failing_order(
     db_session.refresh(delivery)
     assert order.status == OrderStatus.READY
     assert delivery.zip_status == DeliveryZipStatus.FAILED
-    assert "Original not found" in delivery.zip_error
+    assert "Original unavailable" in delivery.zip_error
 
 
 def test_build_zip_requires_existing_delivery(db_session, tmp_path, monkeypatch):

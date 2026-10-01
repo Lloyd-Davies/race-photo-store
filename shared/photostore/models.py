@@ -282,6 +282,27 @@ class Delivery(Base):
     order = relationship("Order", back_populates="delivery")
 
 
+class RecoveryActivation(Base):
+    __tablename__ = "recovery_activation"
+    id = Column(Integer, primary_key=True)
+    activated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class RecoveryJob(Base):
+    __tablename__ = "recovery_jobs"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String, nullable=False)
+    target_id = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="PENDING")
+    attempts = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_attempt_at = Column(DateTime(timezone=True))
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    error = Column(String)
+    __table_args__ = (UniqueConstraint("kind", "target_id", name="uq_recovery_target"),)
+
+
 class Communication(Base):
     __tablename__ = "communications"
 

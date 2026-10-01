@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.communication_queue import enqueue_communication_after_commit
 from app.deps import get_db
-from app.fulfillment import mark_order_ready
+from app.fulfillment import confirm_payment
+from photostore.recovery import ensure_job, exclusion
+from photostore.models import RecoveryJob
+from photostore.stripe_pricing import stripe_object_dict
 from app.order_access import verify_order_access_token
 from app.rate_limit import enforce_rate_limit
 from app.schemas import OrderDownloadItemOut, OrderOut, OrderZipOut
@@ -18,7 +21,6 @@ from photostore.config import settings
 from photostore.delivery import ensure_delivery_for_order
 from photostore.models import Delivery, DeliveryZipStatus, Order, OrderItem, OrderStatus
 from photostore.storage import InvalidStorageKey, get_zip_storage_backend
-from photostore.stripe_pricing import apply_checkout_session_pricing, stripe_expandable_id
 
 router = APIRouter(prefix="/api", tags=["orders"])
 logger = logging.getLogger(__name__)
@@ -68,7 +70,7 @@ def _zip_out(delivery: Delivery | None) -> OrderZipOut:
         status=status,
         download_url=(f"{_base_url()}/d/{delivery.token}" if is_ready else None),
         expires_at=(delivery.zip_expires_at if is_ready else None),
-        error=delivery.zip_error if status == DeliveryZipStatus.FAILED else None,
+        error="ZIP preparation failed. Retry generation or contact support." if status == DeliveryZipStatus.FAILED else None,
     )
 
 
@@ -110,6 +112,8 @@ def _order_out(order: Order, delivery: Delivery | None, db: Session) -> OrderOut
     return OrderOut(
         id=order.id,
         status=order.status,
+        recovery_pending=db.query(RecoveryJob.id).filter_by(order_id=order.id, status="PENDING").first() is not None,
+        recovery_needs_review=db.query(RecoveryJob.id).filter_by(order_id=order.id, status="REVIEW").first() is not None,
         download_url=zip_state.download_url,
         zip=zip_state,
         items=photo_items,
@@ -144,17 +148,10 @@ def _try_fulfill_from_stripe(order: Order, db: Session) -> None:
     try:
         stripe.api_key = settings.STRIPE_SECRET_KEY
         sess = stripe.checkout.Session.retrieve(order.stripe_session_id)
-        if sess.payment_status != "paid":
+        confirmed, comm_id = confirm_payment(order, stripe_object_dict(sess), db)
+        if not confirmed:
             return
-        pricing_captured = apply_checkout_session_pricing(order, sess, db)
-        if pricing_captured:
-            order.stripe_pricing_status = "QUEUED"
-        comm_id = mark_order_ready(
-            order,
-            db,
-            payment_intent_id=stripe_expandable_id(sess.payment_intent),
-            customer_email=sess.customer_email or None,
-        )
+        pricing_captured = order.stripe_pricing_status == "QUEUED"
         db.commit()
         db.refresh(order)
         if comm_id:
@@ -167,8 +164,10 @@ def _try_fulfill_from_stripe(order: Order, db: Session) -> None:
         if pricing_captured:
             enqueue_order_pricing_sync_after_commit(db, order_id=order.id, actor="system")
         logger.info("Order %s fulfilled via Stripe polling (webhook fallback)", order.id)
-    except Exception:
-        logger.exception("Stripe polling fallback failed for order %s", order.id)
+    except Exception as exc:
+        if not db.is_active:
+            db.rollback()
+        logger.warning("stripe_polling_failed order_id=%s error_type=%s", order.id, type(exc).__name__)
 
 
 @router.get("/orders/{order_id}", response_model=OrderOut)
@@ -183,7 +182,7 @@ def get_order(
 
     _require_order_access(order_id, access_token, x_order_access)
 
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = db.query(Order).filter(Order.id == order_id).with_for_update().first()
     if not order:
         raise HTTPException(404, "Order not found")
 
@@ -210,10 +209,12 @@ def prepare_order_zip(
     enforce_rate_limit(request, scope="order-zip", limit=60, window_seconds=60)
     _require_order_access(order_id, access_token, x_order_access)
 
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = db.query(Order).filter(Order.id == order_id).with_for_update().first()
     if not order:
         raise HTTPException(404, "Order not found")
 
+    if exclusion(order, db):
+        raise HTTPException(410, "Order access is unavailable")
     if order.status == OrderStatus.PENDING:
         raise HTTPException(409, "Order is not ready yet")
     if order.status == OrderStatus.EXPIRED:
@@ -232,12 +233,16 @@ def prepare_order_zip(
         db.commit()
         return zip_state
 
+    ensure_job(db, order.id, "zip", order.id, restart=True, approved=True)
     delivery.zip_status = DeliveryZipStatus.BUILDING
     delivery.zip_error = None
     delivery.zip_deleted_at = None
     delivery.zip_expires_at = None
     db.commit()
 
-    celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+    try:
+        celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+    except Exception:
+        logger.warning("zip_dispatch_deferred order_id=%s", order.id)
     db.refresh(delivery)
     return _zip_out(delivery)

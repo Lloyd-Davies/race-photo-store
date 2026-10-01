@@ -311,10 +311,8 @@ def test_stripe_polling_fallback_fulfills_pending_order(
     db_session.add(order)
     db_session.flush()
 
-    fake_session = MagicMock()
-    fake_session.payment_status = "paid"
-    fake_session.payment_intent = "pi_test_polling"
-    fake_session.customer_email = "runner@example.com"
+    fake_session = {"id": order.stripe_session_id, "payment_status": "paid",
+                    "payment_intent": "pi_test_polling", "customer_email": "runner@example.com"}
     with patch("app.routes.orders.stripe.checkout.Session.retrieve", return_value=fake_session):
         resp = client.get(
             f"/api/orders/{order.id}",

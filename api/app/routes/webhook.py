@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.communication_queue import enqueue_communication_after_commit
 from app.deps import get_db
-from app.fulfillment import mark_order_ready
+from app.fulfillment import confirm_payment
 from app.order_activity import record_order_activity
 from app.rate_limit import enforce_rate_limit
 from app.stripe_event_store import store_stripe_event
@@ -16,7 +16,6 @@ from photostore.config import settings
 from photostore.models import Order, OrderStatus, StripeEvent
 from photostore.stripe_pricing import (
     apply_charge_refunds,
-    apply_checkout_session_pricing,
     apply_refund,
     stripe_expandable_id,
     stripe_object_dict,
@@ -158,22 +157,11 @@ def _handle_checkout_completed(
     order = db.query(Order).filter(Order.stripe_session_id == session["id"]).first()
     if not order:
         return None, None, None
-    if session.get("payment_status") not in {"paid", "no_payment_required", None}:
+    confirmed, comm_id = confirm_payment(order, session, db, actor="stripe")
+    if not confirmed:
         return None, order.id, None
-
-    pricing_captured = apply_checkout_session_pricing(order, session, db)
-    if pricing_captured:
-        order.stripe_pricing_status = "QUEUED"
+    pricing_captured = order.stripe_pricing_status == "QUEUED"
     payment_intent_id = stripe_expandable_id(session.get("payment_intent"))
-    comm_id = None
-
-    if order.status == OrderStatus.PENDING:
-        comm_id = mark_order_ready(
-            order,
-            db,
-            payment_intent_id=payment_intent_id,
-            customer_email=session.get("customer_email"),
-        )
     record_order_activity(
         db,
         order_id=order.id,

@@ -5,6 +5,7 @@ import stripe
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
+from photostore.recovery import retry_allowed
 from photostore.models import Order
 from photostore.stripe_pricing import apply_checkout_session_pricing
 
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 def sync_stripe_pricing(self, order_id: int) -> dict:
     db = SessionLocal()
     try:
+        if not retry_allowed(db, "pricing", order_id):
+            return {"status": "review", "order_id": order_id}
         order = db.query(Order).filter(Order.id == order_id).first()
         if not order:
             return {"status": "missing", "order_id": order_id}

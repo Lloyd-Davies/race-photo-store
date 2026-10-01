@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from urllib.parse import urlencode
+from uuid import NAMESPACE_URL, uuid5
 
 from photostore.celery_app import celery_app
 from photostore.config import settings
 from photostore.db import SessionLocal
+from photostore.recovery import task_lock, exclusion, retry_allowed
 from photostore.email_provider import EmailMessage, ProviderError, get_provider
 from photostore.email_templates import (
     render_delivery_reset,
@@ -81,7 +83,13 @@ def _build_context(order: Order, db) -> dict:
 @celery_app.task(name="tasks.send_email.send_email", bind=True, max_retries=3)
 def send_email(self, communication_id: int) -> None:  # type: ignore[override]
     db = SessionLocal()
+    lock = task_lock(db, 7211, communication_id)
+    acquired = lock.__enter__()
     try:
+        if not acquired:
+            return
+        if not retry_allowed(db, "email", communication_id):
+            return
         comm: Communication | None = (
             db.query(Communication).filter(Communication.id == communication_id).first()
         )
@@ -94,13 +102,21 @@ def send_email(self, communication_id: int) -> None:  # type: ignore[override]
         if not order:
             raise ValueError(f"Order for communication {communication_id} not found")
 
+        if comm.status in {CommunicationStatus.SENT, CommunicationStatus.DELIVERED, CommunicationStatus.BOUNCED, CommunicationStatus.BLOCKED}:
+            return
+        if exclusion(order, db):
+            return
+
         # Render template
         render_fn = _RENDER_MAP.get(comm.kind)
         if not render_fn:
             raise ValueError(f"No template for kind {comm.kind}")
 
-        ctx = _build_context(order, db)
-        html_body, text_body = render_fn(ctx)
+        if comm.body_html and comm.body_text:
+            html_body, text_body = comm.body_html, comm.body_text
+        else:
+            ctx = _build_context(order, db)
+            html_body, text_body = render_fn(ctx)
 
         # Store rendered bodies before attempting send
         comm.body_html = html_body
@@ -117,6 +133,7 @@ def send_email(self, communication_id: int) -> None:  # type: ignore[override]
             text_body=text_body,
             from_email=settings.EMAIL_FROM_ADDRESS,
             from_name=settings.EMAIL_FROM_NAME,
+            idempotency_key=str(uuid5(NAMESPACE_URL, f"{settings.PUBLIC_BASE_URL}:communication:{comm.id}")),
         )
         message_id = provider.send(msg)
 
@@ -132,7 +149,7 @@ def send_email(self, communication_id: int) -> None:  # type: ignore[override]
             fail_comm = db.query(Communication).filter(Communication.id == comm_id).first()
             if fail_comm and self.request.retries >= self.max_retries:
                 fail_comm.status = CommunicationStatus.FAILED
-                fail_comm.error_message = str(exc)
+                fail_comm.error_message = type(exc).__name__
                 db.commit()
         except Exception:
             pass
@@ -144,11 +161,12 @@ def send_email(self, communication_id: int) -> None:  # type: ignore[override]
             fail_comm = db.query(Communication).filter(Communication.id == communication_id).first()
             if fail_comm:
                 fail_comm.status = CommunicationStatus.FAILED
-                fail_comm.error_message = str(exc)
+                fail_comm.error_message = type(exc).__name__
                 db.commit()
         except Exception:
             pass
         raise
 
     finally:
+        lock.__exit__(None, None, None)
         db.close()

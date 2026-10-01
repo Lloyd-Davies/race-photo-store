@@ -1,3 +1,4 @@
+from photostore.recovery import ensure_job, exclusion
 from pathlib import Path
 from collections import defaultdict
 import csv
@@ -91,13 +92,11 @@ from photostore.storage import (
     get_zip_storage_backend,
     get_zip_storage_backend_name,
 )
-from app.fulfillment import mark_order_ready
+from app.fulfillment import confirm_payment
 from app.order_activity import record_order_activity
 from app.stripe_event_store import store_stripe_event
 from app.stripe_pricing_queue import enqueue_order_pricing_sync_after_commit
 from photostore.stripe_pricing import (
-    apply_checkout_session_pricing,
-    stripe_expandable_id,
     stripe_object_dict,
 )
 
@@ -745,52 +744,11 @@ def _apply_stripe_session_to_order(
     *,
     actor: str,
 ) -> tuple[bool, int | None]:
-    payment_status = session.get("payment_status")
-    status = session.get("status")
-    changed = False
-    communication_id = None
-
-    if apply_checkout_session_pricing(order, session, db):
-        order.stripe_pricing_status = "QUEUED"
-        changed = True
-
-    if payment_status == "paid" or status == "complete":
-        if order.status == OrderStatus.PENDING:
-            communication_id = mark_order_ready(
-                order,
-                db,
-                payment_intent_id=stripe_expandable_id(session.get("payment_intent")),
-                customer_email=session.get("customer_email"),
-                initiated_by=actor,
-            )
-            record_order_activity(
-                db,
-                order_id=order.id,
-                action="STRIPE_SYNC_COMPLETED",
-                message="Order marked ready after Stripe sync",
-                actor=actor,
-                metadata={"stripe_session_id": session.get("id")},
-            )
-            changed = True
-    elif status == "expired" and order.status == OrderStatus.PENDING:
+    confirmed, communication_id = confirm_payment(order, session, db, actor=actor)
+    if not confirmed and session.get("status") == "expired" and order.status == OrderStatus.PENDING:
         order.status = OrderStatus.FAILED
-        record_order_activity(
-            db,
-            order_id=order.id,
-            action="STRIPE_SYNC_EXPIRED",
-            message="Order marked failed after Stripe reported an expired session",
-            actor=actor,
-            metadata={"stripe_session_id": session.get("id")},
-        )
-        changed = True
-
-    if session.get("payment_intent") and order.stripe_payment_intent_id != session.get("payment_intent"):
-        order.stripe_payment_intent_id = session.get("payment_intent")
-        changed = True
-    if session.get("customer_email") and order.email != session.get("customer_email"):
-        order.email = session.get("customer_email")
-        changed = True
-    return changed, communication_id
+        return True, None
+    return confirmed, communication_id
 
 
 @router.post("/login", response_model=AdminSessionOut)
@@ -2307,6 +2265,8 @@ def reset_delivery(
             initiated_by="admin",
         )
         db.add(comm)
+        db.flush()
+        ensure_job(db, order.id, "email", comm.id, approved=True)
         record_order_activity(
             db,
             order_id=order_id,
@@ -2365,12 +2325,14 @@ def expire_delivery(order_id: int, db: Session = Depends(get_db)) -> AdminOrderO
     dependencies=[Depends(require_admin)],
 )
 def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrderOut:
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = db.query(Order).filter(Order.id == order_id).with_for_update().first()
     if not order:
         raise HTTPException(404, "Order not found")
 
     if order.status == OrderStatus.PENDING:
         raise HTTPException(409, "Order is not paid yet")
+    if exclusion(order, db):
+        raise HTTPException(409, "Order access is unavailable; review access or refunds")
 
     delivery = ensure_delivery_for_order(order, db)
     if delivery.zip_status == DeliveryZipStatus.BUILDING:
@@ -2378,6 +2340,7 @@ def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrde
 
     if order.status == OrderStatus.PAID:
         order.status = OrderStatus.READY
+    ensure_job(db, order.id, "zip", order.id, restart=True, approved=True)
     delivery.zip_status = DeliveryZipStatus.BUILDING
     delivery.zip_error = None
     delivery.zip_deleted_at = None
@@ -2391,7 +2354,10 @@ def rebuild_order_zip(order_id: int, db: Session = Depends(get_db)) -> AdminOrde
     )
     db.commit()
 
-    celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+    try:
+        celery_app.send_task("tasks.build_zip.build_zip", args=[order.id])
+    except Exception:
+        logger.warning("zip_dispatch_deferred order_id=%s", order.id)
 
     db.refresh(order)
     db.refresh(delivery)
@@ -2451,6 +2417,8 @@ def send_communication(
         initiated_by="admin",
     )
     db.add(comm)
+    db.flush()
+    ensure_job(db, order.id, "email", comm.id, approved=True)
     record_order_activity(
         db,
         order_id=order_id,

@@ -193,7 +193,7 @@ def test_send_email_provider_failure_sets_failed(db_session, monkeypatch):
 
     db_session.refresh(comm)
     assert comm.status == CommunicationStatus.FAILED
-    assert "Brevo returned 500" in comm.error_message
+    assert comm.error_message == "Exception"
 
 
 def test_send_email_retry_updates_existing_row_not_creates_new(db_session, monkeypatch):

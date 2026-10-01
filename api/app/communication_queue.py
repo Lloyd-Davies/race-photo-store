@@ -39,7 +39,7 @@ def enqueue_communication_after_commit(
             )
             if communication:
                 communication.status = CommunicationStatus.FAILED
-                communication.error_message = "Email task could not be queued; retry from admin."
+                communication.error_message = "Email dispatch deferred; automatic recovery will retry eligible orders."
 
             record_order_activity(
                 db,

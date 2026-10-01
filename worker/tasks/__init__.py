@@ -8,4 +8,5 @@ from .build_zip import build_zip  # noqa: F401
 from .cleanup_expired_zips import cleanup_expired_zips  # noqa: F401
 from .migrate_event_assets import migrate_event_assets  # noqa: F401
 from .send_email import send_email  # noqa: F401
+from .recover_orders import recover_orders  # noqa: F401
 from .sync_stripe_pricing import sync_stripe_pricing  # noqa: F401

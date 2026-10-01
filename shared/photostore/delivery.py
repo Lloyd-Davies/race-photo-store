@@ -41,7 +41,8 @@ def ensure_delivery_for_order(order: Order, db: Session) -> Delivery:
         token=str(uuid.uuid4()),
         zip_path=None,
         event_slug=event_slug_for_order(order.id, db),
-        expires_at=order_access_expires_at(),
+        expires_at=(order.paid_at + timedelta(hours=settings.ORDER_ACCESS_TTL_HOURS)
+                    if order.paid_at else order_access_expires_at()),
         max_downloads=settings.DOWNLOAD_MAX_DOWNLOADS,
         download_count=0,
         zip_status=DeliveryZipStatus.NOT_REQUESTED,

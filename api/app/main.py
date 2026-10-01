@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 
-from app.routes import admin, cart, checkout, config, downloads, events, health, orders, seo, webhook
+from app.routes import admin, cart, checkout, config, downloads, events, health, orders, recovery, seo, webhook
 
 app = FastAPI(
     title="PhotoStore API",
@@ -27,3 +27,4 @@ app.include_router(orders.router)
 app.include_router(downloads.router)
 app.include_router(webhook.router)
 app.include_router(admin.router)
+app.include_router(recovery.router)
