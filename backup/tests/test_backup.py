@@ -58,10 +58,17 @@ def synthetic_runtime_metadata(monkeypatch):
 
 
 def test_roundtrip_relationships_sequences_schema_and_cleanup(key):
+    with b.connect() as source:
+        source_revisions = [row[0] for row in source.execute(
+            'SELECT version_num FROM alembic_version ORDER BY version_num')]
+    assert source_revisions
     manifest = b.backup()
+    assert manifest['schema_revisions'] == source_revisions
     name = b.restore(manifest['object_key'] + '.json', key)
     with b.connect('restore-postgres', name) as db:
-        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0] == '0011'
+        restored_revisions = [row[0] for row in db.execute(
+            'SELECT version_num FROM alembic_version ORDER BY version_num')]
+        assert restored_revisions == source_revisions
         assert db.execute('SELECT value FROM photo_tags JOIN photos ON photos.id=photo_tags.photo_id JOIN events ON events.id=photos.event_id').fetchone()[0] == '123'
         assert db.execute('SELECT status FROM orders JOIN order_items ON orders.id=order_items.order_id').fetchone()[0] == 'READY'
         assert db.execute("INSERT INTO events(slug,name,date,is_password_protected) VALUES ('after-restore','Restored',now(),false) RETURNING id").fetchone()[0] == 2
