@@ -1,3 +1,4 @@
+import { OrderRecovery } from '../../components/OrderRecovery'
 import { useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -173,11 +174,13 @@ export default function AdminOrderDetail() {
   const orderData = useQuery({
     queryKey: ['admin-order', id],
     queryFn: () => fetchAdminOrder(id),
+    refetchInterval: 15000,
   })
 
   const commsQuery = useQuery({
     queryKey: ['admin-order-comms', id],
     queryFn: () => fetchOrderCommunications(id),
+    refetchInterval: 15000,
   })
 
   const timelineQuery = useQuery({
@@ -263,6 +266,7 @@ export default function AdminOrderDetail() {
             )}
           </div>
           <OrderActions order={order} />
+          <OrderRecovery orderId={order.id} />
         </div>
       )}
 

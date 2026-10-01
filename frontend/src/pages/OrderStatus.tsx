@@ -76,7 +76,7 @@ export default function OrderStatus() {
     refetchInterval: (query) => {
       const status = query.state.data?.status
       const zipStatus = query.state.data?.zip?.status
-      return (status && POLL_STATUSES.includes(status)) || zipStatus === 'BUILDING' ? 3000 : false
+      return (status && POLL_STATUSES.includes(status)) || zipStatus === 'BUILDING' || query.state.data?.recovery_pending ? 3000 : false
     },
   })
   const order = orderQuery.data
@@ -120,7 +120,8 @@ export default function OrderStatus() {
   const { status } = order
   const zip = order.zip
   const downloadItems = order.items?.length ? order.items : order.download_items ?? []
-  const isFinal = status === 'READY' || status === 'FAILED' || status === 'EXPIRED'
+  const recovering = !!order?.recovery_pending && status !== 'READY'
+  const isFinal = status === 'READY' || (status === 'FAILED' && !recovering) || status === 'EXPIRED'
   const currentStepIdx = STEP_ORDER.indexOf(status as Status)
   const isInAppBrowser = isEmbeddedInAppBrowser()
   const actionLinkClass =
@@ -243,7 +244,7 @@ export default function OrderStatus() {
         <div className="flex justify-center mb-6">
           {status === 'READY' ? (
             <CheckCircle2 size={48} className="text-sky-400" />
-          ) : status === 'FAILED' ? (
+          ) : status === 'FAILED' && !recovering ? (
             <XCircle size={48} className="text-red-400" />
           ) : (
             <Clock size={48} className="text-sky-500 animate-pulse" />
@@ -253,12 +254,14 @@ export default function OrderStatus() {
           <h1 className="text-xl font-bold text-center text-content mb-1">
           {status === 'READY'
             ? 'Your photos are ready!'
-            : status === 'FAILED'
+            : status === 'FAILED' && !recovering
               ? 'Something went wrong'
               : 'Processing your order'}
         </h1>
 
         <p className="text-sm text-center text-gray-400 mb-8">Order #{id}</p>
+        {order?.recovery_pending && <p className="mb-4 text-center text-sm">We are retrying interrupted order steps. This page updates automatically; available photos can still be downloaded.</p>}
+        {order?.recovery_needs_review && <p className="mb-4 text-center text-sm">Automatic recovery needs review. Please contact support with your order number.</p>}
 
         {status === 'READY' && isInAppBrowser && (
           <EmbeddedBrowserWarning mode="download" />
@@ -279,7 +282,7 @@ export default function OrderStatus() {
         ) : null}
 
         {/* Failed message */}
-        {status === 'FAILED' && (
+        {status === 'FAILED' && !recovering && (
           <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2 mb-6">
             Your order could not be completed. Please contact support referencing order #{id}.
           </p>

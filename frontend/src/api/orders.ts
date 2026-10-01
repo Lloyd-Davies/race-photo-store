@@ -19,6 +19,8 @@ export interface OrderZip {
 
 export interface Order {
   id: number
+  recovery_pending?: boolean
+  recovery_needs_review?: boolean
   status: OrderStatus
   download_url?: string
   zip: OrderZip

@@ -1,3 +1,4 @@
+import { HistoricalRecoveryPreview } from '../../components/OrderRecovery'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -234,6 +235,7 @@ export default function AdminOrders() {
 
   return (
     <div className="space-y-5">
+      <HistoricalRecoveryPreview />
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-xl font-bold text-content">Orders</h1>
